@@ -1,0 +1,20 @@
+{
+  "name": "wamp-inspector",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "format": "prettier . --write",
+    "format:check": "prettier . --check",
+    "test": "node --test",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.3.7",
+    "prettier": "3.10.1",
+    "typescript": "^7.0.2"
+  }
+}

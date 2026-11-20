@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WAMP Inspector</title>
+    <link rel="stylesheet" href="../shared/theme.css" />
+    <link rel="stylesheet" href="panel.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="toolbar">
+        <h1><span class="mark" aria-hidden="true"></span>WAMP Inspector</h1>
+        <code id="inspected-url" class="page-url clip">Reading page URL…</code>
+        <button
+          id="columns-button"
+          class="control"
+          type="button"
+          popovertarget="payload-columns"
+        >
+          Columns
+        </button>
+        <button id="clear" class="control" type="button">Clear messages</button>
+      </header>
+
+      <div class="workspace">
+        <aside class="sidebar" aria-label="WebSocket connections">
+          <div class="side-head">
+            <h2>Open connections</h2>
+            <span id="count" class="count"></span>
+          </div>
+          <div class="connection-scroll">
+            <ul id="connections"></ul>
+            <p id="no-connections" class="empty" hidden>No open connections.</p>
+          </div>
+          <details id="closed-history" class="closed-history" hidden>
+            <summary class="side-head">
+              <span>Closed connections</span
+              ><span id="closed-count" class="count"></span>
+              <span class="chevron" aria-hidden="true">›</span>
+            </summary>
+            <div class="history-scroll"><ul id="closed-connections"></ul></div>
+          </details>
+        </aside>
+
+        <label class="socket-select"
+          >Connection
+          <select id="socket-picker">
+            <optgroup id="pick-open" label="Open connections"></optgroup>
+            <optgroup id="pick-closed" label="Closed connections"></optgroup>
+          </select>
+        </label>
+
+        <section class="capture" aria-label="Selected connection">
+          <div class="capture-bar">
+            <div
+              id="search-tools"
+              class="search-tools"
+              role="search"
+              aria-label="Search WAMP messages"
+            >
+              <input
+                id="message-search"
+                class="search-input"
+                type="search"
+                placeholder="Topic, procedure or #ID"
+                aria-label="Search messages by topic, procedure or request ID"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <button
+                id="filter-button"
+                class="control"
+                type="button"
+                popovertarget="message-filters"
+              >
+                Filters <span id="filter-count" hidden></span>
+              </button>
+              <output
+                id="match-count"
+                class="match-count"
+                aria-label="Matching rows"
+              ></output>
+              <button
+                id="hide-search"
+                class="control search-mode"
+                type="button"
+                aria-label="Close search toolbar"
+              >
+                Done
+              </button>
+            </div>
+            <div class="capture-stats">
+              <button
+                id="show-search"
+                class="control search-mode"
+                type="button"
+                aria-expanded="false"
+                aria-controls="search-tools"
+              >
+                Search
+              </button>
+              <dl class="metrics" aria-live="polite">
+                <div>
+                  <dt>Messages</dt>
+                  <dd id="message-count"></dd>
+                </div>
+                <div>
+                  <dt>Pending</dt>
+                  <dd id="pending-count"></dd>
+                </div>
+                <div>
+                  <dt aria-label="Average response">
+                    Avg<span class="metric-response-word"> response</span>
+                  </dt>
+                  <dd id="avg-response"></dd>
+                </div>
+              </dl>
+              <details id="socket-details" class="socket-details">
+                <summary class="control" aria-label="Connection details">
+                  Details
+                </summary>
+                <dl id="metadata"></dl>
+              </details>
+            </div>
+          </div>
+          <div class="stream">
+            <div
+              class="stream-head stream-grid"
+              role="group"
+              aria-label="Message columns"
+            >
+              <span></span>
+              <span class="column-heading" data-column="dir"
+                ><span class="clip">Dir</span></span
+              >
+              <span class="column-heading" data-column="type"
+                ><span class="clip">Type</span></span
+              >
+              <span class="column-heading request-id" data-column="request"
+                ><span class="clip">Req ID</span></span
+              >
+              <span class="message-context">
+                <span class="column-heading" data-column="summary">
+                  <span class="clip"
+                    >Summary<span class="docked-topic-heading">
+                      / Topic</span
+                    ></span
+                  >
+                </span>
+                <span class="column-heading topic-heading" data-column="topic"
+                  ><span class="clip">Topic</span></span
+                >
+              </span>
+              <span class="custom-column-cells"></span>
+              <span class="column-heading message-time" data-column="time"
+                ><span class="clip">Time</span></span
+              >
+              <span class="column-heading latency" data-column="latency"
+                ><span class="clip">Latency</span></span
+              >
+            </div>
+            <ul id="messages" aria-label="WAMP messages"></ul>
+            <p id="capture-status" class="empty" role="status" hidden></p>
+            <p id="no-messages" class="empty" role="status" hidden></p>
+          </div>
+          <section
+            id="message-inspector"
+            class="inspector"
+            aria-labelledby="inspector-title"
+            hidden
+          >
+            <div
+              id="payload-resize"
+              class="inspector-resize"
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label="Resize JSON preview"
+              aria-controls="message-inspector"
+              tabindex="0"
+              title="Drag or use the arrow keys to resize"
+            ></div>
+            <header class="inspector-head">
+              <h2 id="inspector-title" class="inspector-title">JSON preview</h2>
+              <code id="inspected-message" class="inspector-label clip"></code>
+              <button
+                id="toggle-payload-search"
+                class="control"
+                type="button"
+                aria-controls="payload-search"
+                aria-expanded="false"
+                title="Find in payload"
+              >
+                Find
+              </button>
+              <button
+                id="expand-inspector"
+                class="control"
+                type="button"
+                aria-controls="message-inspector"
+              >
+                Expand
+              </button>
+              <button
+                id="close-inspector"
+                class="control"
+                type="button"
+                aria-label="Close payload"
+                title="Close payload"
+              >
+                ×
+              </button>
+            </header>
+            <div
+              id="payload-search"
+              class="payload-search"
+              role="search"
+              aria-label="Search selected payload"
+              hidden
+            >
+              <input
+                id="payload-query"
+                class="search-input"
+                type="search"
+                placeholder="Find key or value"
+                aria-label="Find a payload key or value"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <output
+                id="payload-match-count"
+                class="match-count"
+                for="payload-query"
+                aria-label="Payload matches"
+              ></output>
+              <button
+                id="previous-payload-match"
+                class="control"
+                type="button"
+                aria-label="Previous match"
+                title="Previous match (Shift+Enter)"
+                disabled
+              >
+                ↑
+              </button>
+              <button
+                id="next-payload-match"
+                class="control"
+                type="button"
+                aria-label="Next match"
+                title="Next match (Enter)"
+                disabled
+              >
+                ↓
+              </button>
+            </div>
+            <div
+              id="payload-contents"
+              class="payloads"
+              role="region"
+              aria-label="Payload contents"
+              tabindex="0"
+            ></div>
+          </section>
+        </section>
+      </div>
+    </main>
+
+    <form
+      id="message-filters"
+      class="filter-popover"
+      popover
+      aria-labelledby="filters-heading"
+    >
+      <h2 id="filters-heading">Message filters</h2>
+      <fieldset class="filter-group">
+        <legend>Type</legend>
+        <div id="filter-types" class="filter-options"></div>
+      </fieldset>
+      <fieldset class="filter-group">
+        <legend>Response</legend>
+        <div class="filter-options">
+          <label class="filter-toggle"
+            ><input
+              type="checkbox"
+              name="response"
+              value="pending"
+            />Pending</label
+          >
+          <label class="filter-toggle"
+            ><input type="checkbox" name="response" value="error" />Error</label
+          >
+          <label class="filter-toggle"
+            ><input
+              type="checkbox"
+              name="response"
+              value="success"
+            />Success</label
+          >
+        </div>
+      </fieldset>
+      <label class="latency-filter" for="minimum-latency">
+        Latency ≥
+        <input
+          id="minimum-latency"
+          class="search-input"
+          type="number"
+          min="0"
+          placeholder="Any"
+          aria-label="Minimum latency in milliseconds"
+        />
+        ms
+      </label>
+      <label class="filter-toggle"
+        ><input type="checkbox" name="payload" />Search JSON payload</label
+      >
+      <div class="filter-actions">
+        <button id="clear-filters" class="control" type="button">
+          Clear filters
+        </button>
+        <button
+          id="done-filters"
+          class="control"
+          type="button"
+          popovertarget="message-filters"
+          popovertargetaction="hide"
+        >
+          Done
+        </button>
+      </div>
+    </form>
+
+    <section
+      id="payload-columns"
+      class="payload-column-panel"
+      popover
+      aria-labelledby="payload-columns-title"
+    >
+      <h2 id="payload-columns-title">Columns</h2>
+      <label class="filter-toggle topic-column-toggle"
+        ><input id="show-topic-column" type="checkbox" /> Topic</label
+      >
+      <p>Click a key in JSON Preview to add it to the table.</p>
+      <form id="payload-column-form" hidden>
+        <code id="payload-column-path"></code>
+        <label for="payload-column-name">Column name</label>
+        <input
+          id="payload-column-name"
+          class="search-input"
+          required
+          maxlength="64"
+          autocomplete="off"
+        />
+        <button class="control" type="submit">Save column</button>
+      </form>
+      <ul id="payload-column-list"></ul>
+    </section>
+
+    <template id="connection-template">
+      <li>
+        <button class="connection" type="button" aria-pressed="false">
+          <code class="clip"></code>
+          <span class="conn-meta"
+            ><span class="status"></span><span class="frame muted"></span
+            ><time></time
+          ></span>
+        </button>
+      </li>
+    </template>
+
+    <template id="message-template">
+      <li>
+        <button
+          class="message-row stream-grid"
+          type="button"
+          aria-expanded="false"
+          aria-controls="message-inspector"
+        >
+          <span class="chevron" aria-hidden="true">›</span>
+          <span class="direction"></span>
+          <code class="message-type clip"></code>
+          <code class="request-id muted clip"></code>
+          <span class="message-context">
+            <code class="preview clip"></code>
+            <code class="row-topic clip"></code>
+          </span>
+          <span class="custom-column-cells"></span>
+          <time class="message-time muted clip"></time>
+          <code class="latency muted clip"></code>
+        </button>
+      </li>
+    </template>
+
+    <template id="payload-template">
+      <section class="payload">
+        <header><strong></strong><code class="muted"></code></header>
+        <div class="payload-body"></div>
+      </section>
+    </template>
+
+    <script type="module" src="panel.js"></script>
+  </body>
+</html>
