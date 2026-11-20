@@ -1,0 +1,33 @@
+:root {
+  color-scheme: dark;
+  --canvas: #151a22;
+  --toolbar: #202733;
+  --sidebar: #191f29;
+  --control: #272f3d;
+  --control-border: #63758d;
+  --line: #364253;
+  --row-line: #283241;
+  --text: #e4ebf5;
+  --muted: #a9b7cb;
+  --selection: #25405e;
+  --selection-line: #547ca6;
+  --blue: #9ac6ff;
+  --blue-tint: #263b58;
+  --green: #87dcb0;
+  --green-tint: #203a34;
+  --purple: #d1b9ff;
+  --purple-tint: #382e50;
+  --amber: #f1c47f;
+  --red: #ff9b9b;
+  --mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font:
+    12px/1.4 system-ui,
+    sans-serif;
+}
+
+.mark {
+  flex: none;
+  width: 19px;
+  height: 19px;
+  background: url("../../icons/devtools-icon.svg") center / contain no-repeat;
+}

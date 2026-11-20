@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WAMP Inspector</title>
+    <link rel="stylesheet" href="../shared/theme.css" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="popup">
+      <header class="toolbar">
+        <h1><span class="mark" aria-hidden="true"></span>WAMP Inspector</h1>
+      </header>
+      <div class="popup-content">
+        <section aria-labelledby="tab-heading" class="tab-check">
+          <div class="tab-check-heading">
+            <h2 id="tab-heading">Current tab</h2>
+            <button id="check-tab" type="button">Refresh</button>
+          </div>
+          <div id="tab-details" class="tab-details" hidden>
+            <p id="tab-name" class="tab-name"></p>
+            <p id="tab-url" class="tab-url" hidden></p>
+          </div>
+          <p id="capture-status" class="capture-status" role="status">
+            Checking this tab…
+          </p>
+          <dl id="tab-summary" class="tab-summary" hidden>
+            <div>
+              <dt>Open connections</dt>
+              <dd id="open-count">—</dd>
+            </div>
+            <div>
+              <dt>Messages captured</dt>
+              <dd id="message-count">—</dd>
+            </div>
+            <div>
+              <dt>Last message</dt>
+              <dd id="last-message">—</dd>
+            </div>
+          </dl>
+        </section>
+        <p>Open DevTools and select the <strong>WAMP Inspector</strong> tab.</p>
+      </div>
+      <footer class="popup-help">
+        Missing the tab? Reload the extension and reopen DevTools.
+      </footer>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
