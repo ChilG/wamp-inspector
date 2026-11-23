@@ -71,6 +71,8 @@ npm run build
 
 Upload the generated `dist/wamp-inspector-<version>.zip` in the Chrome Web Store Developer Dashboard. The ZIP includes the extension runtime and icons, with `manifest.json` at the root.
 
+On GitLab, the `pack_extension` job runs the checks and builds the same ZIP. Open the job’s artifact browser and download `dist/wamp-inspector-<version>.zip` for the Chrome Web Store. [GitLab job artifacts](https://docs.gitlab.com/ci/jobs/job_artifacts/)
+
 Run **Package WAMP Inspector** from the repository's **Actions** tab to download the extension ZIP as a workflow artifact. The workflow must be on the default branch before you can run it manually.
 
 For a GitHub release, push a tag that matches the version in `manifest.json`, such as `v0.1.0`. After checks pass, the workflow attaches `wamp-inspector-0.1.0.zip` to a draft on the **Releases** page. Review the draft and publish it when ready.

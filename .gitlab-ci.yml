@@ -1,0 +1,19 @@
+pack_extension:
+  stage: build
+  image: node:22-bookworm
+  before_script:
+    - |
+      if ! command -v zip >/dev/null || ! command -v unzip >/dev/null; then
+        apt-get update
+        apt-get install -y --no-install-recommends zip unzip
+      fi
+    - npm ci --ignore-scripts
+  script:
+    - npm run format:check
+    - npm run typecheck
+    - npm test
+    - npm run build
+  artifacts:
+    name: "wamp-inspector-${CI_COMMIT_SHORT_SHA}"
+    paths:
+      - dist/wamp-inspector-*.zip
