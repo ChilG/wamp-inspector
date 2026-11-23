@@ -1,4 +1,5 @@
 const timeoutMs = 2000;
+const procedures = new Set(["demo.success", "demo.error", "demo.no_response"]);
 const connectionStatus = document.querySelector("#connection-status");
 const result = document.querySelector("#call-result");
 const scenario = document.querySelector("#scenario");
@@ -57,16 +58,34 @@ socket.addEventListener("close", (event) => {
   onDisconnect(event.wasClean ? "Disconnected" : "Connection failed");
 });
 
-form.addEventListener("submit", (event) => {
-  event.preventDefault();
-  if (!connected || pending) return;
+function sendCall(procedure) {
+  if (!procedures.has(procedure)) return { status: "invalid_scenario" };
+  if (!connected || socket.readyState !== WebSocket.OPEN)
+    return { status: "not_connected" };
+  if (pending) return { status: "busy" };
 
-  const id = nextRequestId++;
+  const id = nextRequestId;
+  try {
+    socket.send(JSON.stringify([48, id, {}, procedure]));
+  } catch {
+    result.textContent = "Unable to send the mock CALL.";
+    return { status: "unavailable" };
+  }
+
+  nextRequestId += 1;
+  scenario.value = procedure;
   sendButton.disabled = true;
   result.textContent = `Waiting for request ${id}…`;
   const timer = window.setTimeout(() => {
     finishCall(`Timed out waiting for a reply to request ${id}.`);
   }, timeoutMs);
   pending = { id, timer };
-  socket.send(JSON.stringify([48, id, {}, scenario.value]));
+  return { status: "sent", requestId: id };
+}
+
+window.wampInspectorMockDemo = Object.freeze({ sendCall });
+
+form.addEventListener("submit", (event) => {
+  event.preventDefault();
+  sendCall(scenario.value);
 });

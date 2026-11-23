@@ -10,7 +10,6 @@
     "128": "icons/wamp-128.png"
   },
   "permissions": ["tabs", "webNavigation"],
-  "optional_permissions": ["nativeMessaging"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "src/capture/background.js",

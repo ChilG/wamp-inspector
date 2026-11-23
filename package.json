@@ -9,15 +9,12 @@
     "test": "node --test",
     "typecheck": "tsc --noEmit && tsc -p e2e",
     "test:e2e": "playwright test e2e",
-    "mock:wamp": "node tools/mock-wamp/server.mjs",
-    "mcp:install": "node tools/mcp/install.js",
-    "mcp:uninstall": "node tools/mcp/install.js --uninstall"
+    "mock:wamp": "node tools/mock-wamp/server.mjs"
   },
   "engines": {
     "node": ">=22"
   },
   "devDependencies": {
-    "@modelcontextprotocol/client": "2.4.0",
     "@playwright/test": "1.65.1",
     "@types/chrome": "^0.3.7",
     "@types/node": "22.20.5",
@@ -25,8 +22,6 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "@modelcontextprotocol/server": "2.4.0",
-    "ws": "8.23.0",
-    "zod": "4.6.7"
+    "ws": "8.23.0"
   }
 }

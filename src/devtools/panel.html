@@ -9,34 +9,27 @@
   </head>
   <body>
     <main class="shell">
-      <header>
-        <div class="toolbar">
-          <h1><span class="mark" aria-hidden="true"></span>WAMP Inspector</h1>
-          <code id="inspected-url" class="page-url clip"
-            >Reading page URL…</code
-          >
-          <button
-            id="columns-button"
-            class="control"
-            type="button"
-            popovertarget="payload-columns"
-          >
-            Columns
-          </button>
-          <button id="clear" class="control" type="button">
-            Clear messages
-          </button>
-          <button
-            id="mcp-share"
-            class="control"
-            type="button"
-            title="Share this tab's WAMP metadata with a local MCP client"
-            aria-describedby="mcp-share-status"
-          >
-            Share with MCP
-          </button>
-        </div>
-        <p id="mcp-share-status" class="mcp-share-status" role="status"></p>
+      <header class="toolbar">
+        <h1><span class="mark" aria-hidden="true"></span>WAMP Inspector</h1>
+        <code id="inspected-url" class="page-url clip">Reading page URL…</code>
+        <button
+          id="columns-button"
+          class="control"
+          type="button"
+          popovertarget="payload-columns"
+        >
+          Columns
+        </button>
+        <button id="clear" class="control" type="button">Clear messages</button>
+        <button
+          id="mock-open"
+          class="control"
+          type="button"
+          popovertarget="mock-controls"
+          hidden
+        >
+          Send mock
+        </button>
       </header>
 
       <div class="workspace">
@@ -281,6 +274,24 @@
         </section>
       </div>
     </main>
+
+    <form
+      id="mock-controls"
+      class="payload-column-panel mock-popover"
+      popover
+      aria-label="Send a mock WAMP CALL"
+    >
+      <label for="mock-scenario">Scenario</label>
+      <div class="mock-inputs">
+        <select id="mock-scenario" autofocus>
+          <option value="demo.success">Success</option>
+          <option value="demo.error">Error</option>
+          <option value="demo.no_response">No response</option>
+        </select>
+        <button id="mock-send" class="control" type="submit">Send CALL</button>
+      </div>
+      <p id="mock-status" role="status"></p>
+    </form>
 
     <form
       id="message-filters"

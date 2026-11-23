@@ -5,7 +5,7 @@ import { PayloadSearch } from "./panel-payload-search.js";
 import { PayloadPanelResize } from "./panel-resize.js";
 import { bindTopicColumn, MessageColumnResize } from "./panel-columns.js";
 import { subscribeToCapture } from "./panel-capture-stream.js";
-import { bindMcpSharing } from "./panel-mcp-sharing.js";
+import { bindMockSender } from "./panel-mock.js";
 import { PayloadColumns } from "./panel-payload-columns.js";
 import { sendCaptureRequest } from "../shared/capture-client.js";
 
@@ -33,6 +33,14 @@ const payloadSearch = new PayloadSearch(inspector, payloads, () =>
   panelResize.update(),
 );
 const sockets = new Map();
+const setMockPage = bindMockSender({
+  trigger: $("#mock-open"),
+  popover: $("#mock-controls"),
+  form: $("#mock-controls"),
+  scenario: $("#mock-scenario"),
+  send: $("#mock-send"),
+  status: $("#mock-status"),
+});
 
 const clockOptions = {
   hour: "2-digit",
@@ -96,6 +104,7 @@ function setPageUrl(url) {
   const address = typeof url === "string" ? url : "";
   text(page, address.replace(/^https?:\/\//, "") || "Unknown page URL");
   page.title = address;
+  setMockPage(address);
 }
 
 function stateLabel(state) {
@@ -613,7 +622,6 @@ chrome.devtools.inspectedWindow.eval("location.href", (url, exception) => {
 
 clearMessageView("No WAMP messages captured yet.");
 renderSockets([]);
-bindMcpSharing($("#mcp-share"), $("#mcp-share-status"), tabId);
 subscribeToCapture(tabId, onCaptureUpdate, () => {
   setCaptureStatus("Reconnecting to the background worker…");
 });

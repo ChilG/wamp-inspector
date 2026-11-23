@@ -80,15 +80,6 @@ time {
   background: var(--toolbar);
   border-bottom: 1px solid var(--line);
 }
-.mcp-share-status {
-  color: var(--muted);
-  background: var(--toolbar);
-  overflow-wrap: anywhere;
-}
-.mcp-share-status:not(:empty) {
-  padding: 4px 10px;
-  border-bottom: 1px solid var(--line);
-}
 h1 {
   display: flex;
   align-items: center;
@@ -373,6 +364,36 @@ h1 {
   background: var(--toolbar);
   color: var(--text);
   box-shadow: 0 5px 18px #0009;
+}
+#mock-open {
+  anchor-name: --mock-trigger;
+}
+.mock-popover {
+  width: min(266px, calc(100vw - 20px));
+}
+@supports (top: anchor(bottom)) {
+  .mock-popover {
+    position-anchor: --mock-trigger;
+    top: calc(anchor(bottom) + 6px);
+  }
+}
+.mock-inputs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.mock-inputs select {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  background: var(--control);
+  border: 1px solid var(--control-border);
+  border-radius: 4px;
+}
+#mock-status:not(:empty) {
+  margin-top: 8px;
+  color: var(--muted);
 }
 .payload-column-panel h2 {
   font-size: 12px;
