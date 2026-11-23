@@ -60,6 +60,12 @@ Run `npm run format` to apply Prettier and `npm run format:check` to check forma
 
 With Google Chrome installed, run `npm run test:e2e` to verify message search, one-shot mocking, and persistent mocks in DevTools with a local test fixture and a temporary browser profile.
 
+## Bump the extension version
+
+After **Bump Version** is on `main`, open **Actions → Bump Version → Run workflow** on `main` and choose `patch`, `minor`, or `major`. The workflow updates `manifest.json`, `package.json`, and `package-lock.json`, runs checks, and opens a version PR into `main`. For the first run, choose `patch` to move from `0.1.0` to `0.1.1`.
+
+In **Settings → Actions → General**, enable **Allow GitHub Actions to create and approve pull requests** for the workflow to open the PR with its repository token.
+
 ## Package a release
 
 Run `npm run build` to create `dist/wamp-inspector-<version>.zip` locally.
