@@ -119,6 +119,8 @@ function describeFrame(message, subscriptions, key) {
 
   return {
     key,
+    messageId: message.messageId,
+    mocked: message.mocked === true,
     type,
     code,
     id,
@@ -141,6 +143,8 @@ function pairResponse(request, reply) {
     replyKey: reply.key,
     replySummary: reply.summary,
     responseType: reply.type,
+    responseMessageId: reply.messageId,
+    responseMocked: reply.mocked,
     responseTime: reply.time,
     responseState: reply.responseState,
     latency: Number.isFinite(elapsed) && elapsed >= 0 ? elapsed : null,

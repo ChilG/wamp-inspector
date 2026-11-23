@@ -38,7 +38,7 @@ function indexMessageRow({ item, message }) {
 
 function matchesMessage(
   row,
-  { query, requestId, types, responses, minimumLatency, includePayload },
+  { query, requestId, types, responses, minimumLatency },
 ) {
   if (types.length && !types.includes(row.type)) return false;
   if (responses.length && !responses.includes(row.responseState)) return false;
@@ -48,9 +48,7 @@ function matchesMessage(
   )
     return false;
   if (requestId !== undefined) return String(row.id) === requestId;
-  return (
-    row.text.includes(query) || (includePayload && row.payloadContains(query))
-  );
+  return row.text.includes(query) || row.payloadContains(query);
 }
 
 export function syncChildren(parent, children) {
@@ -182,7 +180,6 @@ export class MessageSearch {
       types: data.getAll("type"),
       responses: data.getAll("response"),
       minimumLatency: Number.isFinite(latency) && latency >= 0 ? latency : null,
-      includePayload: data.has("payload"),
     };
     let matches = 0;
     for (const row of this.rows) {
@@ -194,8 +191,7 @@ export class MessageSearch {
     const active =
       filters.types.length +
       filters.responses.length +
-      Number(filters.minimumLatency !== null) +
-      Number(filters.includePayload);
+      Number(filters.minimumLatency !== null);
     this.filterCount.textContent = String(active);
     this.filterCount.hidden = active === 0;
     this.filterButton.toggleAttribute("data-active", active > 0);

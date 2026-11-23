@@ -31,27 +31,7 @@ jobs:
       - name: Create extension ZIP
         id: zip
         shell: bash
-        run: |
-          version=$(node -p 'require("./manifest.json").version')
-          if [[ ! "$version" =~ ^[0-9]+(\.[0-9]+){0,3}$ ]]; then
-            echo "Invalid extension version in manifest.json" >&2
-            exit 1
-          fi
-          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "v$version" ]]; then
-            echo "The release tag must match v$version from manifest.json" >&2
-            exit 1
-          fi
-
-          filename="wamp-inspector-$version.zip"
-          archive="dist/$filename"
-          mkdir -p dist
-          {
-            printf '%s\n' manifest.json
-            find src -type f \( -name '*.js' -o -name '*.html' -o -name '*.css' \)
-            find icons -type f \( -name '*.png' -o -name '*.svg' \)
-          } | LC_ALL=C sort | zip -q "$archive" -@
-          unzip -tq "$archive"
-          printf 'filename=%s\n' "$filename" >> "$GITHUB_OUTPUT"
+        run: bash .github/scripts/package-artifact.sh
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -66,6 +46,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.package.outputs.filename }}
@@ -78,19 +62,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
           ARCHIVE_NAME: ${{ needs.package.outputs.filename }}
-        run: |
-          archive="dist/$ARCHIVE_NAME"
-          unzip -tq "$archive"
-          if release=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,assets); then
-            if ! jq -e '.isDraft' <<< "$release" > /dev/null; then
-              echo "Release $RELEASE_TAG has already been published" >&2
-              exit 1
-            fi
-            if jq -e --arg name "$ARCHIVE_NAME" 'any(.assets[]; .name == $name and .state == "uploaded")' <<< "$release" > /dev/null; then
-              echo "$ARCHIVE_NAME is already attached to the draft"
-            else
-              gh release upload "$RELEASE_TAG" "$archive" --repo "$GITHUB_REPOSITORY"
-            fi
-          else
-            gh release create "$RELEASE_TAG" "$archive" --repo "$GITHUB_REPOSITORY" --draft --verify-tag --generate-notes
-          fi
+        run: bash .github/scripts/attach-draft-release.sh

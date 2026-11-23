@@ -52,77 +52,93 @@
         </label>
 
         <section class="capture" aria-label="Selected connection">
-          <div class="capture-bar">
-            <div
-              id="search-tools"
-              class="search-tools"
-              role="search"
-              aria-label="Search WAMP messages"
-            >
-              <input
-                id="message-search"
-                class="search-input"
-                type="search"
-                placeholder="Topic, procedure or #ID"
-                aria-label="Search messages by topic, procedure or request ID"
-                autocomplete="off"
-                spellcheck="false"
-              />
-              <button
-                id="filter-button"
-                class="control"
-                type="button"
-                popovertarget="message-filters"
+          <div class="capture-header">
+            <div class="capture-bar">
+              <div
+                id="search-tools"
+                class="search-tools"
+                role="search"
+                aria-label="Search WAMP messages"
               >
-                Filters <span id="filter-count" hidden></span>
-              </button>
-              <output
-                id="match-count"
-                class="match-count"
-                aria-label="Matching rows"
-              ></output>
-              <button
-                id="hide-search"
-                class="control search-mode"
-                type="button"
-                aria-label="Close search toolbar"
-              >
-                Done
-              </button>
+                <input
+                  id="message-search"
+                  class="search-input"
+                  type="search"
+                  placeholder="Topic, procedure, #ID or JSON payload"
+                  aria-label="Search messages by topic, procedure, request ID or JSON payload"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+                <button
+                  id="filter-button"
+                  class="control"
+                  type="button"
+                  popovertarget="message-filters"
+                >
+                  Filters <span id="filter-count" hidden></span>
+                </button>
+                <output
+                  id="match-count"
+                  class="match-count"
+                  aria-label="Matching rows"
+                ></output>
+                <button
+                  id="hide-search"
+                  class="control search-mode"
+                  type="button"
+                  aria-label="Close search toolbar"
+                >
+                  Done
+                </button>
+              </div>
+              <div class="capture-stats">
+                <button
+                  id="show-search"
+                  class="control search-mode"
+                  type="button"
+                  aria-expanded="false"
+                  aria-controls="search-tools"
+                >
+                  Search
+                </button>
+                <dl class="metrics" aria-live="polite">
+                  <div>
+                    <dt>Messages</dt>
+                    <dd id="message-count"></dd>
+                  </div>
+                  <div>
+                    <dt>Pending</dt>
+                    <dd id="pending-count"></dd>
+                  </div>
+                  <div>
+                    <dt aria-label="Average response">
+                      Avg<span class="metric-response-word"> response</span>
+                    </dt>
+                    <dd id="avg-response"></dd>
+                  </div>
+                </dl>
+                <details id="socket-details" class="socket-details">
+                  <summary class="control" aria-label="Connection details">
+                    Details
+                  </summary>
+                  <dl id="metadata"></dl>
+                </details>
+              </div>
             </div>
-            <div class="capture-stats">
-              <button
-                id="show-search"
-                class="control search-mode"
-                type="button"
-                aria-expanded="false"
-                aria-controls="search-tools"
-              >
-                Search
-              </button>
-              <dl class="metrics" aria-live="polite">
-                <div>
-                  <dt>Messages</dt>
-                  <dd id="message-count"></dd>
-                </div>
-                <div>
-                  <dt>Pending</dt>
-                  <dd id="pending-count"></dd>
-                </div>
-                <div>
-                  <dt aria-label="Average response">
-                    Avg<span class="metric-response-word"> response</span>
-                  </dt>
-                  <dd id="avg-response"></dd>
-                </div>
-              </dl>
-              <details id="socket-details" class="socket-details">
-                <summary class="control" aria-label="Connection details">
-                  Details
-                </summary>
-                <dl id="metadata"></dl>
-              </details>
+            <div id="pending-mock-bar" hidden>
+              <p id="pending-mock-status" role="status">
+                <span id="pending-mock-state"></span>
+                <code id="pending-mock-target" class="clip"></code>
+              </p>
             </div>
+            <details id="persistent-mocks" hidden>
+              <summary id="persistent-mocks-summary">
+                <span id="persistent-mocks-count">Mocks (0)</span>
+                <span id="persistent-mocks-active" class="muted"></span>
+                <span class="chevron" aria-hidden="true">›</span>
+              </summary>
+              <ul id="persistent-mock-list" aria-label="Saved mocks"></ul>
+            </details>
           </div>
           <div class="stream">
             <div
@@ -183,6 +199,16 @@
             <header class="inspector-head">
               <h2 id="inspector-title" class="inspector-title">JSON preview</h2>
               <code id="inspected-message" class="inspector-label clip"></code>
+              <button
+                id="mock-response-open"
+                class="control"
+                type="button"
+                aria-controls="mock-response-form"
+                title="Edit mock arguments for the next CALL with the same procedure and topic"
+                hidden
+              >
+                Use as mock
+              </button>
               <button
                 id="toggle-payload-search"
                 class="control"
@@ -254,6 +280,7 @@
                 ↓
               </button>
             </div>
+            <p id="mock-response-status" role="status"></p>
             <div
               id="payload-contents"
               class="payloads"
@@ -261,6 +288,35 @@
               aria-label="Payload contents"
               tabindex="0"
             ></div>
+            <form
+              id="mock-response-form"
+              class="mock-response-editor"
+              aria-label="Edit mock response"
+              hidden
+            >
+              <label id="mock-response-label" for="mock-response-body">
+                Mock RESULT <code>[args, kwargs]</code>
+              </label>
+              <textarea
+                id="mock-response-body"
+                aria-describedby="mock-response-error"
+                spellcheck="false"
+                autocapitalize="off"
+                wrap="off"
+              ></textarea>
+              <p id="mock-response-error" role="alert"></p>
+              <div class="mock-response-actions">
+                <button id="mock-response-cancel" class="control" type="button">
+                  Cancel
+                </button>
+                <button id="mock-response-apply" class="control" type="submit">
+                  Apply once
+                </button>
+                <button id="mock-response-enable" class="control" type="submit">
+                  Enable mock
+                </button>
+              </div>
+            </form>
           </section>
         </section>
       </div>
@@ -311,9 +367,6 @@
         />
         ms
       </label>
-      <label class="filter-toggle"
-        ><input type="checkbox" name="payload" />Search JSON payload</label
-      >
       <div class="filter-actions">
         <button id="clear-filters" class="control" type="button">
           Clear filters
@@ -356,6 +409,26 @@
       <ul id="payload-column-list"></ul>
     </section>
 
+    <template id="persistent-mock-template">
+      <li>
+        <p class="persistent-mock-status" role="status">
+          <span class="persistent-mock-state"></span>
+          <code class="persistent-mock-target clip"></code>
+        </p>
+        <div class="persistent-mock-actions">
+          <button class="persistent-mock-toggle control" type="button"></button>
+          <button
+            class="persistent-mock-delete control"
+            type="button"
+            aria-label="Delete mock"
+          >
+            Delete
+          </button>
+        </div>
+        <p class="persistent-mock-error" role="alert" hidden></p>
+      </li>
+    </template>
+
     <template id="connection-template">
       <li>
         <button class="connection" type="button" aria-pressed="false">
@@ -378,7 +451,10 @@
         >
           <span class="chevron" aria-hidden="true">›</span>
           <span class="direction"></span>
-          <code class="message-type clip"></code>
+          <span class="message-kind">
+            <code class="message-type clip"></code>
+            <span class="mock-badge" hidden></span>
+          </span>
           <code class="request-id muted clip"></code>
           <span class="message-context">
             <code class="preview clip"></code>

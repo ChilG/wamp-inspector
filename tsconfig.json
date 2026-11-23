@@ -15,6 +15,7 @@
     "src/shared/*.js",
     "src/capture/background.js",
     "src/devtools/panel-capture-stream.js",
+    "src/devtools/panel-mock-response.js",
     "tests/types/*.ts"
   ]
 }

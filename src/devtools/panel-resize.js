@@ -2,7 +2,7 @@ export class PayloadPanelResize {
   constructor(panel) {
     this.panel = panel;
     this.capture = panel.closest(".capture");
-    this.toolbar = this.capture.querySelector(".capture-bar");
+    this.toolbar = this.capture.querySelector(".capture-header");
     this.search = panel.querySelector(".payload-search");
     this.handle = panel.querySelector("#payload-resize");
     this.expandButton = panel.querySelector("#expand-inspector");
@@ -40,9 +40,11 @@ export class PayloadPanelResize {
     );
     const reservedForMessages = Math.min(54, Math.floor(available * 0.45));
     const max = available - reservedForMessages;
+    const editing = this.panel.hasAttribute("data-editing");
     const min = Math.min(
-      84 + this.search.offsetHeight,
-      Math.floor(available * 0.4),
+      max,
+      (editing ? 164 : 84) + this.search.offsetHeight,
+      Math.floor(available * (editing ? 0.62 : 0.4)),
     );
     return { min, max };
   }

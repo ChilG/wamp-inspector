@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "WAMP Inspector",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Inspect WAMP WebSocket connections and messages in Chrome DevTools. Filter traffic, view JSON payloads, and track latency.",
   "icons": {
     "16": "icons/wamp-16.png",
@@ -9,7 +9,7 @@
     "48": "icons/wamp-48.png",
     "128": "icons/wamp-128.png"
   },
-  "permissions": ["tabs", "webNavigation"],
+  "permissions": ["storage", "tabs", "webNavigation"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "src/capture/background.js",

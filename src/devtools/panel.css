@@ -29,6 +29,7 @@ button:focus-visible,
 input:focus-visible,
 summary:focus-visible,
 select:focus-visible,
+textarea:focus-visible,
 .payloads:focus-visible {
   outline: 2px solid var(--blue);
   outline-offset: -2px;
@@ -238,6 +239,9 @@ h1 {
   min-width: 0;
   min-height: 0;
 }
+.capture:has(.inspector[data-editing]) {
+  --inspector-default-height: min(330px, 62%);
+}
 .capture:has(.inspector:not([hidden])) {
   grid-template-rows: auto minmax(0, 1fr) var(
       --inspector-height,
@@ -248,6 +252,77 @@ h1 {
   gap: 10px;
   justify-content: space-between;
   background: var(--canvas);
+}
+.capture-header {
+  min-width: 0;
+}
+#pending-mock-bar,
+#persistent-mocks {
+  min-width: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--toolbar);
+  font-size: 11px;
+}
+#pending-mock-bar {
+  padding: 4px 10px;
+  color: var(--amber);
+}
+#pending-mock-status,
+.persistent-mock-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  min-width: 0;
+}
+#persistent-mocks-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+}
+#persistent-mocks-summary:hover {
+  background: var(--control);
+}
+#persistent-mocks-summary .chevron {
+  margin-left: auto;
+}
+#persistent-mocks[open] .chevron {
+  transform: rotate(90deg);
+}
+#persistent-mock-list {
+  max-height: min(144px, 30dvh);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+#persistent-mock-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 4px 10px;
+  border-top: 1px solid var(--row-line);
+}
+#persistent-mock-list [data-enabled] .persistent-mock-state {
+  color: var(--green);
+}
+#pending-mock-target,
+.persistent-mock-target,
+.persistent-mock-state {
+  color: var(--muted);
+}
+.persistent-mock-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.persistent-mock-actions button[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.52;
+}
+.persistent-mock-error {
+  grid-column: 1 / -1;
+  color: var(--red);
 }
 .capture-stats,
 .search-tools {
@@ -285,7 +360,8 @@ h1 {
 .search-mode {
   display: none;
 }
-.control[data-active] {
+.control[data-active],
+#mock-response-enable {
   background: var(--selection);
   border-color: var(--blue);
   color: var(--blue);
@@ -585,8 +661,30 @@ summary::-webkit-details-marker {
   color: var(--purple);
   background: var(--purple-tint);
 }
+.message-kind {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  column-gap: 5px;
+}
 .message-type {
   font-weight: 700;
+}
+.mock-badge {
+  flex: none;
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: var(--purple);
+  background: var(--purple-tint);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 14px;
+  white-space: nowrap;
+}
+.mock-badge[data-armed] {
+  color: var(--amber);
+  background: var(--control);
 }
 .message-context {
   display: contents;
@@ -624,12 +722,12 @@ summary::-webkit-details-marker {
 .inspector {
   position: relative;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   background: var(--sidebar);
   border-top: 1px solid var(--selection-line);
 }
 .inspector:has(.payload-search:not([hidden])) {
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr);
 }
 .inspector-resize {
   position: absolute;
@@ -683,6 +781,48 @@ summary::-webkit-details-marker {
 .inspector-label {
   flex: 1;
   color: var(--muted);
+}
+#mock-response-open {
+  flex-shrink: 0;
+}
+#mock-response-status:not(:empty) {
+  padding: 4px 10px;
+  color: var(--muted);
+  background: var(--toolbar);
+  border-bottom: 1px solid var(--line);
+}
+.mock-response-editor {
+  display: grid;
+  grid-template-rows: auto minmax(64px, 1fr) auto auto;
+  gap: 5px;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 10px;
+}
+#mock-response-label code {
+  color: var(--muted);
+}
+#mock-response-body {
+  min-width: 0;
+  padding: 8px;
+  resize: none;
+  overflow: auto;
+  white-space: pre;
+  border: 1px solid var(--control-border);
+  border-radius: 4px;
+  color: var(--text);
+  background: var(--canvas);
+  font: 11px/17px var(--mono);
+  tab-size: 2;
+}
+#mock-response-error {
+  color: var(--red);
+}
+.mock-response-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
 }
 #close-inspector {
   font-size: 15px;
