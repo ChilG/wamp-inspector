@@ -64,7 +64,7 @@ With Google Chrome installed, run `npm run test:e2e` to verify message search, o
 
 After **Bump Version** is on `main`, open **Actions → Bump Version → Run workflow** on `main` and choose `patch`, `minor`, or `major`. The workflow updates `manifest.json`, `package.json`, and `package-lock.json`, runs checks, and opens a version PR into `main`. For the first run, choose `patch` to move from `0.1.0` to `0.1.1`.
 
-In **Settings → Actions → General**, enable **Allow GitHub Actions to create and approve pull requests** for the workflow to open the PR with its repository token.
+In **Settings → Actions → General**, enable **Allow GitHub Actions to create and approve pull requests** for the workflow to open the PR with its repository token. If the version branch was already pushed, rerun the job after enabling the setting or use the comparison link in its logs.
 
 ## Package a release
 
@@ -72,7 +72,7 @@ Run `npm run build` to create `dist/wamp-inspector-<version>.zip` locally.
 
 Run **Package WAMP Inspector** from the repository's **Actions** tab to download the extension ZIP as a workflow artifact. The workflow must be on the default branch before you can run it manually.
 
-For a GitHub release, push a tag that matches the version in `manifest.json`, such as `v0.1.1`. After checks pass, the workflow attaches `wamp-inspector-<version>.zip` to a draft on the **Releases** page. Review the draft and publish it when ready.
+When a version PR from `release/v<version>` merges into `main`, **Tag Version** creates the matching tag on the merge commit and starts **Package WAMP Inspector** for that tag. After checks pass, the workflow attaches `wamp-inspector-<version>.zip` to a draft on the **Releases** page. Review the draft and publish it when ready.
 
 The ZIP contains `manifest.json` at its root, along with the runtime files and icons. The same ZIP format is used for Chrome Web Store submissions.
 
