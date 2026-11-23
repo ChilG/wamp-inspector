@@ -5,8 +5,8 @@ import { PayloadSearch } from "./panel-payload-search.js";
 import { PayloadPanelResize } from "./panel-resize.js";
 import { bindTopicColumn, MessageColumnResize } from "./panel-columns.js";
 import { subscribeToCapture } from "./panel-capture-stream.js";
-import { bindMockSender } from "./panel-mock.js";
-import { bindMockResponseEditor } from "./panel-mock-response.js";
+import { bindMockList } from "./panel-mock-list.js";
+import { bindMockResponse } from "./panel-mock-response.js";
 import { PayloadColumns } from "./panel-payload-columns.js";
 import { sendCaptureRequest } from "../shared/capture-client.js";
 
@@ -33,26 +33,28 @@ const panelResize = new PayloadPanelResize(inspector);
 const payloadSearch = new PayloadSearch(inspector, payloads, () =>
   panelResize.update(),
 );
-const sockets = new Map();
-const setMockPage = bindMockSender({
-  trigger: $("#mock-open"),
-  popover: $("#mock-controls"),
-  form: $("#mock-controls"),
-  scenario: $("#mock-scenario"),
-  topic: $("#mock-topic"),
-  send: $("#mock-send"),
-  status: $("#mock-status"),
+const mockBody = $("#mock-response-body");
+const renderMocks = bindMockList({
+  tabId,
+  onChange: () => queueCaptureRefresh({ connections: true }),
 });
-
-const mockResponseEditor = bindMockResponseEditor({
+const sockets = new Map();
+const setMockCall = bindMockResponse({
   opener: $("#mock-response-open"),
-  dialog: $("#mock-response-editor"),
-  form: $("#mock-response-form"),
-  procedure: $("#mock-response-procedure"),
-  topic: $("#mock-response-topic"),
-  json: $("#mock-response-json"),
-  apply: $("#mock-response-apply"),
   status: $("#mock-response-status"),
+  form: $("#mock-response-form"),
+  body: mockBody,
+  error: $("#mock-response-error"),
+  apply: $("#mock-response-apply"),
+  enable: $("#mock-response-enable"),
+  cancel: $("#mock-response-cancel"),
+  onEdit(editing) {
+    inspector.toggleAttribute("data-editing", editing);
+    payloads.hidden = editing;
+    payloadSearch.setEditor(editing ? mockBody : null);
+    panelResize.update();
+  },
+  onPreview: renderSavedMock,
 });
 
 const clockOptions = {
@@ -80,6 +82,7 @@ const directions = {
 
 let selectedSocketKey = null;
 let selectedMessageKey = null;
+let savedMockPayload = null;
 let rowViews = new Map();
 let messageSnapshot = null;
 let captureRevision = 0;
@@ -117,9 +120,6 @@ function setPageUrl(url) {
   const address = typeof url === "string" ? url : "";
   text(page, address.replace(/^https?:\/\//, "") || "Unknown page URL");
   page.title = address;
-  setMockPage(address);
-  mockResponseEditor.setPage(address);
-  updateMockResponseTarget();
 }
 
 function stateLabel(state) {
@@ -175,7 +175,7 @@ function compareSockets(first, second) {
 }
 
 function updateMockResponseTarget() {
-  mockResponseEditor.setCall(
+  setMockCall(
     sockets.get(selectedSocketKey)?.socket ?? null,
     rowViews.get(selectedMessageKey)?.message ?? null,
   );
@@ -301,11 +301,10 @@ function createPayload(label, meta, payload, source = "request") {
     body.classList.add("payload-waiting");
     text(body, "Waiting for response");
   } else if (payload.kind === "json") {
-    body.append(
-      createJsonPreview(payload.value, (path) =>
-        payloadColumns.offer(source, path),
-      ),
-    );
+    const onField = source
+      ? (path) => payloadColumns.offer(source, path)
+      : null;
+    body.append(createJsonPreview(payload.value, onField));
   } else {
     const frameText = document.createElement("code");
     frameText.className = "payload-text";
@@ -318,9 +317,43 @@ function createPayload(label, meta, payload, source = "request") {
 
 function createReply(message) {
   const meta = message.response
-    ? `${message.responseType} · ${formatTime(message.responseTime)}`
+    ? [
+        message.responseType,
+        message.responseMocked ? "Mocked" : "",
+        formatTime(message.responseTime),
+      ]
+        .filter(Boolean)
+        .join(" · ")
     : "";
-  return createPayload("Response", meta, message.response, "response");
+  const section = createPayload("Response", meta, message.response, "response");
+  section.dataset.payload = "response";
+  return section;
+}
+
+function updatePayloadSearch(message) {
+  if (!message) {
+    payloadSearch.setPayloads();
+    return;
+  }
+  const captured = [message.payload, message.response];
+  payloadSearch.setPayloads(
+    ...(savedMockPayload ? [savedMockPayload, ...captured] : captured),
+  );
+}
+
+function renderSavedMock(payload, reveal) {
+  const previous = payloads.querySelector("#saved-mock-response");
+  savedMockPayload = payload;
+  if (payload) {
+    const section = createPayload("Mock response", "", payload, null);
+    section.id = "saved-mock-response";
+    if (previous) previous.replaceWith(section);
+    else payloads.prepend(section);
+  } else {
+    previous?.remove();
+  }
+  updatePayloadSearch(rowViews.get(selectedMessageKey)?.message);
+  if (reveal) payloads.scrollTop = 0;
 }
 
 function toggleInspector(key) {
@@ -335,7 +368,6 @@ function toggleInspector(key) {
   const exchange = message.direction === "exchange";
   closeInspector();
   selectedMessageKey = key;
-  updateMockResponseTarget();
   button.setAttribute("aria-expanded", "true");
   text(
     $("#inspected-message"),
@@ -349,7 +381,8 @@ function toggleInspector(key) {
     createPayload(exchange ? "Request" : message.type, meta, message.payload),
   );
   if (exchange) payloads.append(createReply(message));
-  payloadSearch.setPayloads(message.payload, message.response);
+  updatePayloadSearch(message);
+  updateMockResponseTarget();
 
   inspector.hidden = false;
   panelResize.update();
@@ -364,6 +397,9 @@ function renderMessageRow(message, previous) {
   if (
     previous &&
     previous.message.replyKey === message.replyKey &&
+    previous.message.responseMocked === message.responseMocked &&
+    previous.message.mocked === message.mocked &&
+    previous.message.mockArmed === message.mockArmed &&
     previous.message.type === message.type &&
     previous.message.id === message.id &&
     previous.message.summary === message.summary &&
@@ -387,6 +423,15 @@ function renderMessageRow(message, previous) {
   icon.setAttribute("aria-label", direction);
   icon.setAttribute("role", "img");
   text(item.querySelector(".message-type"), message.type);
+  const badge = item.querySelector(".mock-badge");
+  const mocked = message.responseMocked || message.mocked;
+  const armed = !mocked && message.mockArmed;
+  badge.hidden = !mocked && !armed;
+  badge.toggleAttribute("data-armed", armed);
+  badge.title = armed
+    ? "Waiting for the matching CALL result"
+    : "Response used a mock";
+  text(badge, mocked ? "Mocked" : armed ? "Mock armed" : "");
   text(
     item.querySelector(".request-id"),
     message.id == null ? "—" : `#${message.id}`,
@@ -442,12 +487,15 @@ function renderMessages(socket) {
     : [];
   const first = messages[0];
   const last = messages.at(-1);
+  const armedCallId =
+    socket.state === "OPEN" ? socket.mockSourceMessageId : null;
   const signature = JSON.stringify([
     messages.length,
     first?.messageId,
     last?.messageId,
     last?.timestamp,
     socket.lastMessageAt,
+    armedCallId,
   ]);
   if (signature === messageSnapshot) return;
   const preserveScroll = messageSnapshot !== null;
@@ -462,14 +510,23 @@ function renderMessages(socket) {
   );
 
   const next = new Map(
-    rows.map((row) => [row.key, renderMessageRow(row, rowViews.get(row.key))]),
+    rows.map((row) => {
+      const mockArmed =
+        armedCallId != null &&
+        row.type === "CALL" &&
+        row.messageId === armedCallId;
+      return [
+        row.key,
+        renderMessageRow({ ...row, mockArmed }, rowViews.get(row.key)),
+      ];
+    }),
   );
   const before = rowViews.get(selectedMessageKey)?.message;
   const after = next.get(selectedMessageKey)?.message;
   if (before && !after) closeInspector();
   if (after && before?.replyKey !== after.replyKey) {
     payloads.lastElementChild?.replaceWith(createReply(after));
-    payloadSearch.setPayloads(after.payload, after.response);
+    updatePayloadSearch(after);
   }
   rowViews = next;
   updateMockResponseTarget();
@@ -547,11 +604,15 @@ async function refreshCapture() {
 
   try {
     if (readConnections) {
-      const response = await sendCaptureRequest({ type: "get-sockets", tabId });
+      const [response, mockStatus] = await Promise.all([
+        sendCaptureRequest({ type: "get-sockets", tabId }),
+        sendCaptureRequest({ type: "get-mock-status", tabId }),
+      ]);
       if (revision !== captureRevision || clearing) return;
       if (!Array.isArray(response?.sockets))
         throw new Error("Missing socket list");
       renderSockets(response.sockets);
+      renderMocks(mockStatus?.mocks ?? []);
     }
     if (readMessages || selectedSocketKey !== previousSocketKey)
       await refreshSelectedSocket();
@@ -586,7 +647,7 @@ function onCaptureUpdate(message) {
     queueCaptureRefresh({ connections: true, messages: true });
   } else if (message?.type === "capture-updated") {
     queueCaptureRefresh({
-      connections: message.connections === true,
+      connections: message.connections === true || message.allMessages === true,
       messages:
         message.allMessages === true ||
         message.socketKeys?.includes(selectedSocketKey) === true,
@@ -599,6 +660,7 @@ function resetCapture() {
   detailRequest += 1;
   closedHistory.open = false;
   renderSockets([]);
+  renderMocks([]);
   setCaptureStatus("");
 }
 

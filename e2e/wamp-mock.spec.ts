@@ -1,187 +1,56 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { expect, test, type FrameLocator } from "@playwright/test";
 import {
-  chromium,
-  devices,
-  expect,
-  test,
-  type CDPSession,
-  type Locator,
-} from "@playwright/test";
-import { startMockRouter } from "../tools/mock-wamp/server.mjs";
+  captureDevTools,
+  withInspector,
+  type InspectPanel,
+} from "./fixtures/wamp-inspector.js";
 
-type Target = { targetId: string; url: string };
-type CdpReply<T> = {
-  id: number;
-  result?: T;
-  error?: { message: string };
-};
+const selectedProcedure = "demo.success";
+const selectedTopic = "score.live";
+const editedBody = [["edited-fixture-result"], { wire: "mock-only" }];
+const hello = [1, "fixture", { roles: { caller: {} } }];
 
-async function expectReadableControl(control: Locator) {
-  const contrast = await control.evaluate((element) => {
-    function luminance(rgb: string) {
-      const channels = rgb
-        .match(/[\d.]+/g)!
-        .slice(0, 3)
-        .map((value) => Number(value) / 255);
-      const [r, g, b] = channels.map((value) =>
-        value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4,
-      );
-      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-    }
-    const style = getComputedStyle(element);
-    const values = [luminance(style.color), luminance(style.backgroundColor)];
-    return (Math.max(...values) + 0.05) / (Math.min(...values) + 0.05);
-  });
-  expect(contrast).toBeGreaterThanOrEqual(4.5);
+function wireResult(id: number) {
+  return [50, id, { sequence: id }, [`server-${id}`], { wire: id }];
 }
 
-async function attach(root: CDPSession, targetId: string) {
-  const { sessionId } = await root.send("Target.attachToTarget", {
-    targetId,
-    flatten: false,
-  });
-  let sequence = 0;
-  // Attach to DevTools and its extension iframe through the browser CDP session.
-  function command<T>(method: string, params: object) {
-    const id = ++sequence;
-    return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(
-        () => finish(new Error("Chrome CDP timed out")),
-        5000,
-      );
-      function finish(error?: Error, value?: unknown) {
-        clearTimeout(timer);
-        root.off("Target.receivedMessageFromTarget", receive);
-        if (error) reject(error);
-        else resolve(value as T);
-      }
-      function receive(event: { sessionId: string; message: string }) {
-        if (event.sessionId !== sessionId) return;
-        const reply = JSON.parse(event.message) as CdpReply<T>;
-        if (reply.id !== id) return;
-        finish(reply.error && new Error(reply.error.message), reply.result);
-      }
-      root.on("Target.receivedMessageFromTarget", receive);
-      void root
-        .send("Target.sendMessageToTarget", {
-          sessionId,
-          message: JSON.stringify({ id, method, params }),
-        })
-        .catch(finish);
-    });
-  }
-  async function evaluate<T>(expression: string, userGesture = false) {
-    const evaluation = await command<{
-      result: { value?: T };
-      exceptionDetails?: { text: string };
-    }>("Runtime.evaluate", {
-      expression,
-      userGesture,
-      returnByValue: true,
-      awaitPromise: true,
-    });
-    if (evaluation.exceptionDetails)
-      throw new Error(evaluation.exceptionDetails.text);
-    return evaluation.result.value;
-  }
-  return { command, evaluate };
-}
-
-async function captureDevTools(
-  frontend: Awaited<ReturnType<typeof attach>>,
-  filename: string,
+function wireCall(
+  id: number,
+  topic = selectedTopic,
+  procedure = selectedProcedure,
+  mode = "result",
 ) {
-  let data: string;
-  try {
-    ({ data } = await frontend.command<{ data: string }>(
-      "Page.captureScreenshot",
-      { format: "png", fromSurface: false },
-    ));
-  } catch (error) {
-    // Native window capture can be unavailable in a headed test session.
-    if (
-      error instanceof Error &&
-      error.message === "Unable to capture screenshot"
-    )
-      return;
-    throw error;
-  }
-  await writeFile(
-    test.info().outputPath(filename),
-    Buffer.from(data, "base64"),
-  );
+  return [48, id, {}, procedure, [], { topic, mode }];
 }
 
-async function waitForTarget(
-  root: CDPSession,
-  matches: (target: Target) => boolean,
+async function sendCall(
+  app: FrameLocator,
+  id: number,
+  topic = selectedTopic,
+  procedure = selectedProcedure,
+  mode = "result",
 ) {
-  let target: Target | undefined;
-  await expect
-    .poll(async () => {
-      target = (await root.send("Target.getTargets")).targetInfos.find(matches);
-      return Boolean(target);
-    })
-    .toBe(true);
-  return target!.targetId;
-}
-
-async function openInspector(root: CDPSession, existing: Set<string>) {
-  const devtools = await waitForTarget(
-    root,
-    (target) =>
-      !existing.has(target.targetId) && target.url.startsWith("devtools://"),
-  );
-  const frontend = await attach(root, devtools);
-  await expect
-    .poll(() =>
-      frontend.evaluate<boolean>(`(async () => {
-    if (!document.querySelector('iframe[data-devtools-extension="WAMP Inspector"]')) return false;
-    const { InspectorView } = await import('./ui/legacy/legacy.js');
-    const inspector = InspectorView.InspectorView.instance();
-    const pane = inspector.tabbedPane.tabsHistory.find(tab => tab.title === 'WAMP Inspector');
-    if (!pane) return false;
-    await inspector.showPanel(pane.id);
-    return true;
-  })()`),
-    )
-    .toBe(true);
-  const panel = await waitForTarget(root, (target) =>
-    target.url.endsWith("/src/devtools/panel.html"),
-  );
-  const { evaluate } = await attach(root, panel);
-  return { inspect: evaluate, frontend };
-}
-
-type InspectPanel = Awaited<ReturnType<typeof openInspector>>["inspect"];
-
-async function sendMockCall(
-  inspect: InspectPanel,
-  procedure: string,
-  topic = "",
-) {
-  await inspect(
-    `(() => {
-      const scenario = document.querySelector('#mock-scenario');
-      if (!scenario.checkVisibility()) document.querySelector('#mock-open').click();
-      scenario.value = ${JSON.stringify(procedure)};
-      scenario.dispatchEvent(new Event('change', { bubbles: true }));
-      const topic = document.querySelector('#mock-topic');
-      topic.value = ${JSON.stringify(topic)};
-      topic.dispatchEvent(new Event('input', { bubbles: true }));
-      document.querySelector('#mock-send').click();
-    })()`,
-    true,
+  await app.getByRole("textbox", { name: "Procedure" }).fill(procedure);
+  await app.getByRole("textbox", { name: "Topic" }).fill(topic);
+  await app.getByRole("combobox", { name: "Server reply" }).selectOption(mode);
+  await app.getByRole("button", { name: "Send CALL" }).click();
+  await expect(app.getByRole("status", { name: "CALL state" })).toHaveText(
+    mode === "hold" ? `Waiting #${id}` : `Received #${id}`,
   );
 }
 
-async function openCallReply(inspect: InspectPanel, id: number, topic: string) {
-  const row = `[...document.querySelectorAll('button[aria-controls="message-inspector"]')].find(
-    (button) => button.querySelector('.preview')?.textContent === 'demo.success' &&
+function findCallRow(id: number) {
+  return `[...document.querySelectorAll('[aria-controls="message-inspector"][aria-expanded]')].find(
+    (button) => button.querySelector('.message-type')?.textContent === 'CALL' &&
       button.querySelector('.request-id')?.textContent === ${JSON.stringify(`#${id}`)})`;
+}
 
+async function openCallReply(
+  inspect: InspectPanel,
+  id: number,
+  topic = selectedTopic,
+) {
+  const row = findCallRow(id);
   await expect
     .poll(() =>
       inspect(`(() => {
@@ -200,278 +69,757 @@ async function openCallReply(inspect: InspectPanel, id: number, topic: string) {
   );
 }
 
-function readOpenReply(inspect: InspectPanel) {
+async function openMockEditor(
+  inspect: InspectPanel,
+  expectedBody: unknown[] = wireResult(1).slice(3),
+  id = 1,
+  topic = selectedTopic,
+) {
+  await openCallReply(inspect, id, topic);
+  await expect
+    .poll(() =>
+      inspect<string>(`(() => {
+        const button = document.querySelector('#mock-response-open');
+        return button?.checkVisibility() && !button.disabled ? button.textContent.trim() : '';
+      })()`),
+    )
+    .toBe("Use as mock");
+  await inspect("document.querySelector('#mock-response-open').click()", true);
+  await expect
+    .poll(() =>
+      inspect<unknown[]>(`(() => {
+        const editor = document.querySelector('#mock-response-body');
+        return editor?.closest('#message-inspector') && editor.checkVisibility()
+          ? JSON.parse(editor.value) : null;
+      })()`),
+    )
+    .toEqual(expectedBody);
+  await expectPreview(inspect, false);
+}
+
+async function expectPreview(inspect: InspectPanel, visible: boolean) {
+  await expect
+    .poll(() =>
+      inspect("document.querySelector('#payload-contents')?.checkVisibility()"),
+    )
+    .toBe(visible);
+}
+
+function findPayloadText(inspect: InspectPanel, text: string) {
+  return inspect(`(() => {
+    if (document.querySelector('#payload-search').hidden)
+      document.querySelector('#toggle-payload-search').click();
+    const query = document.querySelector('#payload-query');
+    query.focus();
+    query.value = ${JSON.stringify(text)};
+    query.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+}
+
+async function expectDraftMatch(
+  inspect: InspectPanel,
+  count: string,
+  selected: string,
+) {
+  await expect
+    .poll(() =>
+      inspect(`(() => {
+        const editor = document.querySelector('#mock-response-body');
+        return {
+          count: document.querySelector('#payload-match-count')?.textContent,
+          selected: editor.value.slice(editor.selectionStart, editor.selectionEnd),
+        };
+      })()`),
+    )
+    .toEqual({ count, selected });
+}
+
+function fillMockEditor(inspect: InspectPanel, text: string) {
+  return inspect(`(() => {
+    const body = document.querySelector('#mock-response-body');
+    body.focus();
+    body.value = ${JSON.stringify(text)};
+    body.setSelectionRange(body.value.length, body.value.length);
+    body.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+}
+
+async function applyMock(inspect: InspectPanel) {
+  await inspect("document.querySelector('#mock-response-apply').click()", true);
+  await expectPreview(inspect, true);
+  await expect
+    .poll(() =>
+      inspect("document.querySelector('#mock-response-status')?.textContent"),
+    )
+    .toContain("Next matching CALL");
+}
+
+async function expectMockBadge(
+  inspect: InspectPanel,
+  id: number,
+  label: "" | "Mock armed" | "Mocked",
+  replyType = "RESULT",
+) {
+  await expect
+    .poll(() =>
+      inspect(`(() => {
+        const call = ${findCallRow(id)};
+        if (call?.querySelector('.latency')?.title !== ${JSON.stringify(replyType)}) return null;
+        const badge = call.querySelector('.mock-badge');
+        return badge?.checkVisibility() ? badge.textContent.trim() : '';
+      })()`),
+    )
+    .toBe(label);
+}
+
+function readPreviewTree(inspect: InspectPanel, selector: string) {
   return inspect<unknown[] | null>(`(() => {
-    const reply = [...document.querySelectorAll('#payload-contents > section')]
-      .find(section => section.querySelector('strong')?.textContent === 'Response');
-    const tree = reply?.querySelector('.json-tree');
+    const tree = document.querySelector(${JSON.stringify(selector)})?.querySelector('.json-tree');
     if (!tree) return null;
-    tree.querySelector('.json-branch[aria-expanded="false"]')?.click();
+    for (const branch of tree.querySelectorAll('.json-branch[aria-expanded="false"]'))
+      branch.click();
     return JSON.parse(tree.textContent);
   })()`);
 }
 
-test("sends all mock CALL scenarios from WAMP Inspector and captures their outcomes", async () => {
-  test.setTimeout(45000);
-  const directory = await mkdtemp(join(tmpdir(), "wamp-e2e-"));
-  let router: Awaited<ReturnType<typeof startMockRouter>> | undefined;
-  let chrome:
-    Awaited<ReturnType<typeof chromium.launchPersistentContext>> | undefined;
+function readOpenReply(inspect: InspectPanel) {
+  return readPreviewTree(
+    inspect,
+    '#payload-contents > [data-payload="response"]',
+  );
+}
 
-  try {
-    router = await startMockRouter({ port: 0 });
-    chrome = await chromium.launchPersistentContext(directory, {
-      channel: "chrome",
-      headless: false,
-      chromiumSandbox: true,
-      ignoreDefaultArgs: ["--disable-extensions"],
-      args: [
-        "--enable-unsafe-extension-debugging",
-        "--auto-open-devtools-for-tabs",
-      ],
-    });
-    const root = await chrome.browser()!.newBrowserCDPSession();
-    await root.send("Extensions.loadUnpacked", { path: process.cwd() });
-    const existing = new Set(
-      (await root.send("Target.getTargets")).targetInfos.map(
-        (target) => target.targetId,
+async function expectSavedMock(inspect: InspectPanel) {
+  await expect
+    .poll(() =>
+      inspect(`(() => {
+        const section = document.querySelector('#saved-mock-response');
+        return section?.checkVisibility()
+          ? section.querySelector('header')?.textContent ?? ''
+          : '';
+      })()`),
+    )
+    .toContain("Mock response");
+  await expect
+    .poll(() => readPreviewTree(inspect, "#saved-mock-response"))
+    .toEqual(editedBody);
+  await expect.poll(() => readOpenReply(inspect)).toEqual(wireResult(1));
+}
+
+async function openMockList(inspect: InspectPanel) {
+  await expect
+    .poll(() =>
+      inspect(
+        "document.querySelector('#persistent-mocks-summary')?.checkVisibility()",
       ),
+    )
+    .toBe(true);
+  await inspect(
+    `(() => {
+    const details = document.querySelector('#persistent-mocks');
+    if (!details.open) details.querySelector('summary').click();
+  })()`,
+    true,
+  );
+}
+
+function mockRow(topic: string) {
+  return `[...document.querySelectorAll('#persistent-mock-list > li')].find(
+    (item) => item.querySelector('.persistent-mock-target').textContent.endsWith(${JSON.stringify(` · ${topic}`)}))`;
+}
+
+async function expectToggle(
+  inspect: InspectPanel,
+  topic: string,
+  enabled: boolean,
+) {
+  await openMockList(inspect);
+  await expect
+    .poll(() =>
+      inspect(`(() => {
+      const item = ${mockRow(topic)};
+      const button = item?.querySelector('.persistent-mock-toggle');
+      return button?.checkVisibility() && button.getAttribute('aria-disabled') !== 'true'
+        ? { label: button.textContent.trim(), enabled: item.hasAttribute('data-enabled') }
+        : null;
+    })()`),
+    )
+    .toEqual({ label: enabled ? "Disable mock" : "Enable mock", enabled });
+}
+
+function toggleMock(inspect: InspectPanel, topic: string) {
+  return inspect(
+    `(${mockRow(topic)}).querySelector('.persistent-mock-toggle').click()`,
+    true,
+  );
+}
+
+test("finds, saves, and reuses an edited one-shot mock in JSON preview", async () => {
+  test.setTimeout(45_000);
+  await withInspector(async ({ fixture, page, app, inspect, frontend }) => {
+    const reply = app.getByRole("log", { name: "Reply frame" });
+    await sendCall(app, 1);
+    await expect(reply).toHaveText(JSON.stringify(wireResult(1)));
+    await expectMockBadge(inspect, 1, "");
+    await openCallReply(inspect, 1);
+    await findPayloadText(inspect, "SERVER-1");
+    await expect
+      .poll(() =>
+        inspect("document.querySelector('#payload-match-count')?.textContent"),
+      )
+      .toBe("1 / 1");
+    await openMockEditor(inspect);
+    await expectDraftMatch(inspect, "1 / 1", "server-1");
+    await fillMockEditor(
+      inspect,
+      JSON.stringify([["server-1", "server-10"], { wire: 1 }], null, 2),
     );
-    const pageReady = chrome.waitForEvent("page");
-    await root.send("Target.createTarget", { url: router.origin });
-    const page = await pageReady;
-    const errors: string[] = [];
-    const workspaceProbe = `${router.origin}/.well-known/appspecific/com.chrome.devtools.json`;
-    page.on("pageerror", (error) => errors.push(error.message));
-    page.on("console", (message) => {
-      const detail = message.text();
-      // Chrome probes for a workspace when DevTools opens on loopback.
-      if (
-        message.type() === "error" &&
-        !(detail.includes(workspaceProbe) && detail.includes("connect-src"))
-      ) {
-        errors.push(detail);
-      }
-    });
-    await expect(
-      page.getByRole("status", { name: "Connection status" }),
-    ).toHaveText("Connected");
-
-    const { inspect, frontend } = await openInspector(root, existing);
-    const mockVisible = () =>
-      inspect<boolean>(
-        "document.querySelector('#mock-open')?.checkVisibility()",
-      );
-    await expect.poll(mockVisible).toBe(true);
-
-    // Each response is asserted in the inspected page and in its captured CALL row.
-    const scenarios = [
-      {
-        procedure: "demo.success",
-        id: 1,
-        result: /Success.*request 1/,
-        response: "RESULT",
-      },
-      {
-        procedure: "demo.error",
-        id: 2,
-        result: /Error.*request 2/,
-        response: "ERROR",
-      },
-      {
-        procedure: "demo.no_response",
-        id: 3,
-        result: /Timed out.*request 3/,
-        response: null,
-      },
-    ];
-    for (const { procedure, id, result, response } of scenarios) {
-      await sendMockCall(inspect, procedure);
-      if (id === 1) {
-        await expect
-          .poll(() =>
-            inspect(`(() => {
-          const controls = document.querySelector('#mock-controls');
-          const button = document.querySelector('#mock-send');
-          const panel = controls.getBoundingClientRect();
-          const trigger = document.querySelector('#mock-open').getBoundingClientRect();
-          return controls.matches(':popover-open') &&
-            button.checkVisibility() &&
-            panel.left >= 0 &&
-            panel.top >= trigger.bottom &&
-            panel.right <= innerWidth;
+    await expectDraftMatch(inspect, "1 / 2", "");
+    await inspect(
+      "document.querySelector('#next-payload-match').click()",
+      true,
+    );
+    await expectDraftMatch(inspect, "2 / 2", "server-1");
+    await expect
+      .poll(() =>
+        inspect(`(() => {
+          const editor = document.querySelector('#mock-response-body');
+          return editor.value.slice(editor.selectionStart, editor.selectionEnd + 1);
         })()`),
-          )
-          .toBe(true);
-      }
-      await expect
-        .poll(() =>
-          inspect("document.querySelector('#mock-status')?.textContent"),
-        )
-        .toContain(`CALL #${id} sent.`);
-      await expect(
-        page.getByRole("status", { name: "Call result" }),
-      ).toHaveText(result);
-      await expect(
-        page.getByRole("combobox", { name: "Scenario" }),
-      ).toHaveValue(procedure);
-      await expect
-        .poll(() =>
-          inspect(`(() => {
-            const row = [...document.querySelectorAll('button[aria-controls="message-inspector"]')]
-              .find(button => button.querySelector('.preview')?.textContent === ${JSON.stringify(procedure)});
-            if (!row) return null;
-            const latency = row.querySelector('.latency');
-            return {
-              type: row.querySelector('.message-type')?.textContent,
-              request: row.querySelector('.request-id')?.textContent,
-              response: latency?.title || null,
-              pending: latency?.textContent === 'Pending',
-            };
-          })()`),
-        )
-        .toEqual({
-          type: "CALL",
-          request: `#${id}`,
-          response,
-          pending: response === null,
-        });
-    }
-    await test.step("mocks only the next CALL with the selected topic", async () => {
-      const procedure = "demo.success";
-      const selectedTopic = "score.live";
-      const otherTopic = "score.pre_match";
-      const mockReply = [50, 999, {}, ["Topic-specific reply"]];
-      const result = page.getByRole("status", { name: "Call result" });
+      )
+      .toBe("server-10");
+    await inspect(`(() => {
+      const query = document.querySelector('#payload-query');
+      query.focus();
+      query.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Enter', bubbles: true, cancelable: true,
+      }));
+    })()`);
+    await expectDraftMatch(inspect, "1 / 2", "server-1");
+    await page.bringToFront();
+    await captureDevTools(frontend, "wamp-mock-editor.png");
+    await inspect(
+      "document.querySelector('#mock-response-cancel').click()",
+      true,
+    );
+    await expectPreview(inspect, true);
+    await expectMockBadge(inspect, 1, "");
+    await expect
+      .poll(() =>
+        inspect("document.querySelector('#mock-response-status')?.textContent"),
+      )
+      .not.toContain("Next matching CALL");
+    await openMockEditor(inspect);
+    await applyMock(inspect);
+    await expectMockBadge(inspect, 1, "Mock armed");
 
-      await sendMockCall(inspect, procedure, selectedTopic);
-      await expect(result).toHaveText(/Success.*request 4/);
-      await openCallReply(inspect, 4, selectedTopic);
-      await expect
-        .poll(() =>
-          inspect<boolean>(
-            "document.querySelector('#mock-response-open')?.checkVisibility()",
-          ),
-        )
-        .toBe(true);
-      await inspect(
-        "document.querySelector('#mock-response-open').click()",
-        true,
+    await sendCall(app, 2, selectedTopic, selectedProcedure, "error");
+    await expect(reply).toHaveText(
+      JSON.stringify([8, 48, 2, {}, "fixture.failed"]),
+    );
+    await expectMockBadge(inspect, 1, "");
+    await expectMockBadge(inspect, 2, "", "ERROR");
+    await sendCall(app, 3);
+    await expect(reply).toHaveText(JSON.stringify(wireResult(3)));
+    await openMockEditor(inspect);
+    await fillMockEditor(inspect, "{");
+    await inspect(
+      "document.querySelector('#mock-response-apply').click()",
+      true,
+    );
+    await expect
+      .poll(() =>
+        inspect<string>(`(() => {
+          const error = document.querySelector('#mock-response-error');
+          return error?.checkVisibility() ? error.textContent.trim() : '';
+        })()`),
+      )
+      .toBeTruthy();
+    await fillMockEditor(inspect, JSON.stringify(editedBody));
+    await applyMock(inspect);
+    await expectMockBadge(inspect, 1, "Mock armed");
+    await expectSavedMock(inspect);
+    await findPayloadText(inspect, "mock-only");
+    await expect
+      .poll(() =>
+        inspect(
+          "document.querySelector('#saved-mock-response mark')?.textContent",
+        ),
+      )
+      .toBe("mock-only");
+    expect(fixture.calls).toHaveLength(4);
+    await inspect("document.querySelector('#expand-inspector').click()", true);
+    await inspect("document.querySelector('#payload-contents').scrollTop = 0");
+    await page.bringToFront();
+    await captureDevTools(frontend, "wamp-mock-saved.png");
+    await inspect("document.querySelector('#expand-inspector').click()", true);
+
+    await inspect("document.querySelector('#close-inspector').click()", true);
+    await expectPreview(inspect, false);
+    await openMockEditor(inspect, editedBody);
+    await fillMockEditor(inspect, JSON.stringify([["discarded draft"]]));
+    await inspect(
+      "document.querySelector('#mock-response-cancel').click()",
+      true,
+    );
+    await expectSavedMock(inspect);
+
+    await sendCall(app, 4, "score.pre_match");
+    await expect(reply).toHaveText(JSON.stringify(wireResult(4)));
+    await expectMockBadge(inspect, 4, "");
+    await sendCall(app, 5, selectedTopic, "demo.other");
+    await expect(reply).toHaveText(JSON.stringify(wireResult(5)));
+    await expectMockBadge(inspect, 5, "");
+    await expectMockBadge(inspect, 1, "Mock armed");
+
+    await sendCall(app, 6, selectedTopic, selectedProcedure, "hold");
+    await expect.poll(() => fixture?.calls.length).toBe(7);
+    await expect(reply).toBeEmpty();
+    await expectMockBadge(inspect, 1, "Mock armed");
+    expect(fixture.replies).toHaveLength(6);
+    fixture.release(6);
+
+    const replay = [50, 6, { sequence: 6 }, ...editedBody];
+    await expect(reply).toHaveText(JSON.stringify(replay));
+    await expect(reply).toHaveAttribute("data-trusted", "true");
+    expect(fixture.replies.at(-1)).toEqual(wireResult(6));
+    await expectMockBadge(inspect, 1, "");
+    await expectMockBadge(inspect, 6, "Mocked");
+    await openCallReply(inspect, 6);
+    await expect
+      .poll(() =>
+        inspect("document.querySelector('#payload-contents')?.textContent"),
+      )
+      .toContain("Mocked");
+    await expect.poll(() => readOpenReply(inspect)).toEqual(replay);
+    await page.bringToFront();
+    await captureDevTools(frontend, "wamp-mock-response.png");
+
+    await sendCall(app, 7);
+    await expect(reply).toHaveText(JSON.stringify(wireResult(7)));
+    await expectMockBadge(inspect, 7, "");
+
+    await openCallReply(inspect, 1);
+    await expectSavedMock(inspect);
+    await openMockEditor(inspect, editedBody);
+    await applyMock(inspect);
+    await expectMockBadge(inspect, 1, "Mock armed");
+    await sendCall(app, 8);
+    await expect(reply).toHaveText(
+      JSON.stringify([50, 8, { sequence: 8 }, ...editedBody]),
+    );
+    expect(fixture.replies.at(-1)).toEqual(wireResult(8));
+    await expectMockBadge(inspect, 8, "Mocked");
+    await expectMockBadge(inspect, 1, "");
+
+    const matching = {
+      procedure: selectedProcedure,
+      topic: selectedTopic,
+      mode: "result",
+    };
+    const outgoing = [
+      matching,
+      { ...matching, mode: "error" },
+      matching,
+      { ...matching, topic: "score.pre_match" },
+      { ...matching, procedure: "demo.other" },
+      { ...matching, mode: "hold" },
+      matching,
+      matching,
+    ];
+    expect(fixture.calls).toEqual([
+      [1, "fixture", { roles: { caller: {} } }],
+      ...outgoing.map(({ procedure, topic, mode }, index) => [
+        48,
+        index + 1,
+        {},
+        procedure,
+        [],
+        { topic, mode },
+      ]),
+    ]);
+  });
+});
+
+for (const restart of [false, true]) {
+  test(
+    restart
+      ? "uses an armed mock once after the extension service worker restarts"
+      : "uses an armed mock once after Football changes both document URLs",
+    async () => {
+      test.setTimeout(45_000);
+      const startupCallId = 101;
+      await withInspector(
+        async ({ fixture, page, app, inspect, frontend, restartWorker }) => {
+          const reply = app.getByRole("log", { name: "Reply frame" });
+          if (!restart) {
+            await page.getByRole("button", { name: "Football" }).click();
+            await expect(page).toHaveURL(/\/sport\/football$/);
+            expect(fixture.connectionCount).toBe(1);
+          }
+          await sendCall(app, 1);
+          await expect(reply).toHaveText(JSON.stringify(wireResult(1)));
+
+          await openMockEditor(inspect);
+          await fillMockEditor(inspect, JSON.stringify(editedBody));
+          await applyMock(inspect);
+          await expectMockBadge(inspect, 1, "Mock armed");
+          expect(fixture.connectionCount).toBe(1);
+          expect(fixture.calls).toHaveLength(2);
+
+          if (restart) await restartWorker();
+          await page.reload({ waitUntil: "domcontentloaded" });
+          if (!restart)
+            await expect(page.getByTitle("WAMP app")).toHaveAttribute(
+              "src",
+              "/app/football?instance=2",
+            );
+          const replay = [
+            50,
+            startupCallId,
+            { sequence: startupCallId },
+            ...editedBody,
+          ];
+          await expect(reply).toHaveText(JSON.stringify(replay));
+          await expect(reply).toHaveAttribute("data-trusted", "true");
+          expect(fixture.connectionCount).toBe(2);
+          expect(fixture.replies.at(-1)).toEqual(wireResult(startupCallId));
+          await expectMockBadge(inspect, startupCallId, "Mocked");
+          await openCallReply(inspect, startupCallId);
+          await expect.poll(() => readOpenReply(inspect)).toEqual(replay);
+          await page.bringToFront();
+          await captureDevTools(
+            frontend,
+            restart ? "wamp-mock-worker-restart.png" : "wamp-mock-reload.png",
+          );
+
+          if (restart) await restartWorker();
+          await page.reload({ waitUntil: "domcontentloaded" });
+          await expect(reply).toHaveText(
+            JSON.stringify(wireResult(startupCallId)),
+          );
+          await expectMockBadge(inspect, startupCallId, "");
+          expect(fixture.connectionCount).toBe(3);
+
+          expect(fixture.calls).toEqual([
+            hello,
+            wireCall(1),
+            hello,
+            wireCall(startupCallId),
+            hello,
+            wireCall(startupCallId),
+          ]);
+          expect(fixture.replies.filter(([type]) => type === 50)).toEqual([
+            wireResult(1),
+            wireResult(startupCallId),
+            wireResult(startupCallId),
+          ]);
+        },
+        { startupCallId, rotatingFrameQuery: !restart },
       );
+    },
+  );
+}
+
+test("shows a mock ready after reload until a matching Topic arrives", async () => {
+  test.setTimeout(45_000);
+  const startupCallId = 101;
+  const startupTopic = "score.pre_match";
+  const matchingCallId = startupCallId + 1;
+  await withInspector(
+    async ({ fixture, page, app, inspect, frontend }) => {
+      const reply = app.getByRole("log", { name: "Reply frame" });
+      await sendCall(app, 1);
+      await expect(reply).toHaveText(JSON.stringify(wireResult(1)));
+      await openMockEditor(inspect);
+      await fillMockEditor(inspect, JSON.stringify(editedBody));
+      await applyMock(inspect);
+      await expectMockBadge(inspect, 1, "Mock armed");
+
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await expect(reply).toHaveText(JSON.stringify(wireResult(startupCallId)));
+      expect(fixture.connectionCount).toBe(2);
+      await expectMockBadge(inspect, startupCallId, "");
       await expect
         .poll(() =>
           inspect(`(() => {
-            const field = document.querySelector('#mock-response-json');
-            return field?.value ? JSON.parse(field.value) : null;
+            const status = document.querySelector('#pending-mock-status');
+            return status?.checkVisibility() ? status.textContent : '';
           })()`),
         )
-        .toEqual([50, 4, {}, ["Mock result"]]);
-      await inspect(
-        `(() => {
-          const response = document.querySelector('#mock-response-json');
-          response.value = ${JSON.stringify(JSON.stringify(mockReply))};
-          response.dispatchEvent(new Event('input', { bubbles: true }));
-          document.querySelector('#mock-response-apply').click();
-        })()`,
-        true,
-      );
+        .toEqual(
+          expect.stringMatching(
+            /Mock ready · Waiting for matching CALL[\s\S]*demo\.success[\s\S]*score\.live/,
+          ),
+        );
+      expect(fixture.calls).toHaveLength(4);
+      await page.bringToFront();
+      await captureDevTools(frontend, "wamp-mock-pending.png");
+
+      await sendCall(app, matchingCallId);
+      const replay = [
+        50,
+        matchingCallId,
+        { sequence: matchingCallId },
+        ...editedBody,
+      ];
+      await expect(reply).toHaveText(JSON.stringify(replay));
+      await expect(reply).toHaveAttribute("data-trusted", "true");
+      await expectMockBadge(inspect, matchingCallId, "Mocked");
+      await expectMockBadge(inspect, startupCallId, "");
       await expect
         .poll(() =>
           inspect(
-            "document.querySelector('#mock-response-status')?.textContent",
+            "Boolean(document.querySelector('#pending-mock-status')?.checkVisibility())",
           ),
         )
-        .toContain("Next CALL");
+        .toBe(false);
+      await openCallReply(inspect, matchingCallId);
+      await expect.poll(() => readOpenReply(inspect)).toEqual(replay);
+
+      expect(fixture.calls).toEqual([
+        hello,
+        wireCall(1),
+        hello,
+        wireCall(startupCallId, startupTopic),
+        wireCall(matchingCallId),
+      ]);
+      expect(fixture.replies.filter(([type]) => type === 50)).toEqual([
+        wireResult(1),
+        wireResult(startupCallId),
+        wireResult(matchingCallId),
+      ]);
+    },
+    { startupCallId, startupTopic, rotatingFrameQuery: true },
+  );
+});
+
+test("keeps an enabled or disabled mock across refreshes and reuses its saved JSON", async () => {
+  test.setTimeout(45_000);
+  const startupCallId = 101;
+  const otherTopic = "score.pre_match";
+  const otherProcedure = "demo.other";
+  await withInspector(
+    async ({ fixture, page, app, inspect, frontend, restartWorker }) => {
+      const reply = app.getByRole("log", { name: "Reply frame" });
+
+      async function expectReply(id: number, mocked: boolean) {
+        const frame = mocked
+          ? [50, id, { sequence: id }, ...editedBody]
+          : wireResult(id);
+        await expect(reply).toHaveText(JSON.stringify(frame));
+        await expect(reply).toHaveAttribute("data-trusted", "true");
+        await expectMockBadge(inspect, id, mocked ? "Mocked" : "");
+        expect(fixture.replies.at(-1)).toEqual(wireResult(id));
+      }
+
+      async function reloadAndExpect(enabled: boolean, connections: number) {
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expectReply(startupCallId, enabled);
+        await expectToggle(inspect, selectedTopic, enabled);
+        expect(fixture.connectionCount).toBe(connections);
+      }
+
+      await page.getByRole("button", { name: "Football" }).click();
+      await expect(page).toHaveURL(/\/sport\/football$/);
+      await sendCall(app, 1);
+      await expectReply(1, false);
+      await openMockEditor(inspect);
+      await applyMock(inspect);
+      await expectMockBadge(inspect, 1, "Mock armed");
+      await openMockEditor(inspect);
+      await fillMockEditor(inspect, JSON.stringify(editedBody));
       await expect
         .poll(() =>
           inspect(`(() => {
-        const dialog = document.querySelector('#mock-response-editor');
-        const bounds = dialog.getBoundingClientRect();
-        return dialog.open && bounds.left >= 0 && bounds.right <= innerWidth &&
-          bounds.top >= 0 && bounds.bottom <= innerHeight;
-      })()`),
+            const button = document.querySelector('#mock-response-enable');
+            return button?.checkVisibility() && !button.disabled
+              ? button.textContent.trim()
+              : '';
+          })()`),
         )
-        .toBe(true);
-      await page.bringToFront();
-      await captureDevTools(frontend, "wamp-mock-response-editor.png");
+        .toBe("Enable mock");
       await inspect(
-        "document.querySelector('#mock-response-close').click()",
+        "document.querySelector('#mock-response-enable').click()",
         true,
       );
+      await expectPreview(inspect, true);
+      await expectToggle(inspect, selectedTopic, true);
+      await expectSavedMock(inspect);
 
-      const replies = [
-        { id: 5, topic: otherTopic, payload: ["Mock result"] },
-        { id: 6, topic: selectedTopic, payload: mockReply[3] },
-        { id: 7, topic: selectedTopic, payload: ["Mock result"] },
-      ];
-      for (const { id, topic, payload } of replies) {
-        await sendMockCall(inspect, procedure, topic);
-        await expect(result).toHaveText(new RegExp(`Success.*request ${id}`));
-        await openCallReply(inspect, id, topic);
-        await expect
-          .poll(() => readOpenReply(inspect))
-          .toEqual([50, id, {}, payload]);
-      }
-    });
-    expect(errors).toEqual([]);
+      await sendCall(app, 2);
+      await expectReply(2, true);
+      await sendCall(app, 3);
+      await expectReply(3, true);
+      await sendCall(app, 4, otherTopic);
+      await expectReply(4, false);
+      await sendCall(app, 5, selectedTopic, otherProcedure);
+      await expectReply(5, false);
 
-    const unrelated = "http://unrelated.example.test/";
-    await page.route(unrelated, (route) =>
-      route.fulfill({
-        contentType: "text/html",
-        body: "<title>Unrelated page</title>",
-      }),
-    );
-    await page.goto(unrelated, { waitUntil: "domcontentloaded" });
-    await expect
-      .poll(() => inspect("document.querySelector('#inspected-url')?.title"))
-      .toBe(unrelated);
-    await expect.poll(mockVisible).toBe(false);
-    await expect
-      .poll(() =>
-        inspect<boolean>(
-          "document.querySelector('#mock-response-open')?.checkVisibility()",
-        ),
-      )
-      .toBe(false);
-  } finally {
-    await chrome?.close();
-    await router?.close();
-    await rm(directory, { recursive: true, force: true });
-  }
+      await reloadAndExpect(true, 2);
+      await page.getByRole("button", { name: "Sports", exact: true }).click();
+      await expect(page).toHaveURL(`${fixture.origin}/`);
+      await restartWorker();
+      await reloadAndExpect(true, 3);
+      await page.bringToFront();
+      await captureDevTools(frontend, "wamp-mock-enabled.png");
+
+      const held = wireCall(102, selectedTopic, selectedProcedure, "hold");
+      await sendCall(app, 102, selectedTopic, selectedProcedure, "hold");
+      await expect.poll(() => fixture.calls.at(-1)).toEqual(held);
+      await toggleMock(inspect, selectedTopic);
+      await expectToggle(inspect, selectedTopic, false);
+      fixture.release(102);
+      await expectReply(102, false);
+
+      await reloadAndExpect(false, 4);
+      await page.bringToFront();
+      await captureDevTools(frontend, "wamp-mock-disabled.png");
+      await toggleMock(inspect, selectedTopic);
+      await expectToggle(inspect, selectedTopic, true);
+      await sendCall(app, 102);
+      await expectReply(102, true);
+
+      expect(fixture.calls).toEqual([
+        hello,
+        wireCall(1),
+        wireCall(2),
+        wireCall(3),
+        wireCall(4, otherTopic),
+        wireCall(5, selectedTopic, otherProcedure),
+        hello,
+        wireCall(startupCallId),
+        hello,
+        wireCall(startupCallId),
+        held,
+        hello,
+        wireCall(startupCallId),
+        wireCall(102),
+      ]);
+    },
+    { startupCallId, rotatingFrameQuery: true, prependFrameOnFirstLoad: true },
+  );
 });
 
-test("mock demo fits a narrow viewport and exposes keyboard controls", async () => {
-  const router = await startMockRouter({ port: 0 });
-  let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
-  try {
-    browser = await chromium.launch({
-      channel: "chrome",
-      chromiumSandbox: true,
-    });
-    const { defaultBrowserType, ...viewport } = devices["Pixel 7"];
-    const page = await browser.newPage(viewport);
-    await page.goto(router.origin, { waitUntil: "domcontentloaded" });
-    await expect(
-      page.getByRole("status", { name: "Connection status" }),
-    ).toHaveText("Connected");
-    const scenario = page.getByRole("combobox", { name: "Scenario" });
-    await scenario.focus();
-    await page.keyboard.press("Tab");
-    const send = page.getByRole("button", { name: "Send CALL" });
-    await expect(send).toBeFocused();
-    await expectReadableControl(send);
-    const box = await send.boundingBox();
-    expect(box!.x + box!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
-    await page.keyboard.press("Enter");
-    await expect(
-      page.getByRole("status", { name: "Call result" }),
-    ).toContainText("Success.");
-    await page.screenshot({
-      path: test.info().outputPath("wamp-demo-narrow.png"),
-    });
-  } finally {
-    await browser?.close();
-    await router.close();
-  }
+test("finds a reply from main search and manages multiple mocks independently", async () => {
+  test.setTimeout(45_000);
+  await withInspector(async ({ fixture, page, app, inspect }) => {
+    const archivedTopic = "score.archived";
+    const archivedBody = [["archived mock"], { wire: "archived" }];
+    const reply = app.getByRole("log", { name: "Reply frame" });
+
+    function search(text: string) {
+      return inspect(`(() => {
+        const input = document.querySelector('#message-search');
+        input.value = ${JSON.stringify(text)};
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      })()`);
+    }
+
+    async function enableMock(id: number, topic: string, body: unknown[]) {
+      await openMockEditor(inspect, wireResult(id).slice(3), id, topic);
+      await fillMockEditor(inspect, JSON.stringify(body));
+      await inspect(
+        "document.querySelector('#mock-response-enable').click()",
+        true,
+      );
+      await expectPreview(inspect, true);
+      await expectToggle(inspect, topic, true);
+    }
+
+    async function expectBody(id: number, body: unknown[]) {
+      await expect(reply).toHaveText(
+        JSON.stringify([50, id, { sequence: id }, ...body]),
+      );
+    }
+
+    async function deleteMock(topic: string) {
+      const button = `(${mockRow(topic)})?.querySelector('.persistent-mock-delete')`;
+      await expect
+        .poll(() => inspect(`${button}?.checkVisibility() ?? false`))
+        .toBe(true);
+      await inspect(
+        `(() => {
+        const action = ${button};
+        action.focus();
+        action.click();
+      })()`,
+        true,
+      );
+      await expect
+        .poll(() => inspect(`Boolean(${mockRow(topic)})`))
+        .toBe(false);
+      await expect
+        .poll(() => inspect("document.activeElement?.id"))
+        .toMatch(/^(persistent-mocks-summary|message-search|show-search)$/);
+    }
+
+    await sendCall(app, 1);
+    await sendCall(app, 2, archivedTopic);
+    await expectMockBadge(inspect, 2, "");
+    await search('"wire":2');
+    await expect
+      .poll(() =>
+        inspect(`([...document.querySelectorAll('[aria-controls="message-inspector"][aria-expanded]')]
+        .filter((button) => button.checkVisibility())
+        .map((button) => button.querySelector('.request-id')?.textContent))`),
+      )
+      .toEqual(["#2"]);
+    await enableMock(2, archivedTopic, archivedBody);
+    await search("");
+    await enableMock(1, selectedTopic, editedBody);
+    await expect
+      .poll(() =>
+        inspect(
+          "document.querySelector('#persistent-mocks-count').textContent",
+        ),
+      )
+      .toBe("Mocks (2)");
+    await expectToggle(inspect, archivedTopic, true);
+
+    await sendCall(app, 3, archivedTopic);
+    await expectBody(3, archivedBody);
+    await sendCall(app, 4);
+    await expectBody(4, editedBody);
+
+    await toggleMock(inspect, archivedTopic);
+    await expectToggle(inspect, archivedTopic, false);
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expectToggle(inspect, archivedTopic, false);
+    await expectToggle(inspect, selectedTopic, true);
+    await sendCall(app, 1, archivedTopic);
+    await expectBody(1, wireResult(1).slice(3));
+    await sendCall(app, 2);
+    await expectBody(2, editedBody);
+    await toggleMock(inspect, archivedTopic);
+    await expectToggle(inspect, archivedTopic, true);
+    await sendCall(app, 3, archivedTopic);
+    await expectBody(3, archivedBody);
+
+    await sendCall(app, 4, archivedTopic, selectedProcedure, "hold");
+    await expect
+      .poll(() => fixture.calls.at(-1))
+      .toEqual(wireCall(4, archivedTopic, selectedProcedure, "hold"));
+    await deleteMock(archivedTopic);
+    await expectToggle(inspect, selectedTopic, true);
+    fixture.release(4);
+    await expectBody(4, wireResult(4).slice(3));
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expectToggle(inspect, selectedTopic, true);
+    await expect
+      .poll(() => inspect(`Boolean(${mockRow(archivedTopic)})`))
+      .toBe(false);
+    await sendCall(app, 1, archivedTopic);
+    await expectBody(1, wireResult(1).slice(3));
+    await sendCall(app, 2);
+    await expectBody(2, editedBody);
+
+    await toggleMock(inspect, selectedTopic);
+    await expectToggle(inspect, selectedTopic, false);
+    await deleteMock(selectedTopic);
+    await expect
+      .poll(() => inspect("document.querySelector('#persistent-mocks').hidden"))
+      .toBe(true);
+  });
 });

@@ -1,169 +1,267 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { runInNewContext } from "node:vm";
-import { bindMockResponseEditor } from "../src/devtools/panel-mock-response.js";
+import { setImmediate } from "node:timers/promises";
+import { analyzeMessages } from "../src/devtools/panel-messages.js";
+import { bindMockResponse } from "../src/devtools/panel-mock-response.js";
 
-const address = "http://127.0.0.1:8765/";
-const token = "701460d0-6702-4e35-94dd-f7d06d40ad61";
-const socket = { frameId: 0, state: "OPEN", url: "ws://127.0.0.1:8765/ws" };
-const call = {
-  key: "call1",
-  type: "CALL",
-  direction: "exchange",
-  id: 7,
-  topic: "matches.live",
-  payload: {
-    kind: "json",
-    value: [48, 7, {}, "/sports#initialDump", [], { topic: "matches.live" }],
-  },
-  response: { kind: "json", value: [50, 7, {}, [{ score: 1 }]] },
+const socket = {
+  id: 3,
+  tabId: 22,
+  frameId: 19,
+  documentId: "document-19",
+  state: "OPEN",
+  protocol: "wamp.2.json",
 };
+const frames = [
+  {
+    messageId: 41,
+    direction: "sent",
+    parsed: [48, 7, {}, "matches.snapshot", [], { topic: "matches.live" }],
+  },
+  {
+    messageId: 43,
+    direction: "received",
+    parsed: [50, 7, {}, [], { score: 1 }],
+  },
+];
 
-function setup(request = async () => ({ ok: true, status: 204 })) {
-  const dialog = Object.assign(new EventTarget(), {
-    open: false,
-    showModal() {
-      this.open = true;
-    },
-    close() {
-      this.open = false;
-      this.dispatchEvent(new Event("close"));
-    },
+const selectCall = (reply = frames[1]) =>
+  analyzeMessages([frames[0], reply]).rows[0];
+
+function setup(arm = async () => ({ ok: true })) {
+  const opener = Object.assign(new EventTarget(), {
+    hidden: true,
+    disabled: false,
+    focus() {},
   });
-  const controls = {
-    opener: Object.assign(new EventTarget(), { hidden: true }),
-    dialog,
-    form: new EventTarget(),
-    procedure: { textContent: "" },
-    topic: { textContent: "" },
-    json: { value: "" },
-    apply: { disabled: false },
-    status: { textContent: "" },
-  };
-  const evaluations = [];
-  const posts = [];
-  const editor = bindMockResponseEditor(
-    controls,
+  const status = { textContent: "" };
+  const error = { textContent: "" };
+  const body = Object.assign(new EventTarget(), {
+    value: "",
+    setAttribute() {},
+    removeAttribute() {},
+    focus() {},
+  });
+  const form = Object.assign(new EventTarget(), { hidden: true });
+  const apply = { disabled: false };
+  const enable = { disabled: false };
+  const cancel = new EventTarget();
+  const requests = [];
+  const editing = [];
+  const previews = [];
+  const savedByCapture = new Map();
+  const setCall = bindMockResponse(
     {
-      eval(expression, callback) {
-        evaluations.push({ expression, callback });
-      },
+      opener,
+      status,
+      form,
+      body,
+      error,
+      apply,
+      enable,
+      cancel,
+      onEdit: (open) => editing.push(open),
+      onPreview: (payload) => previews.push(payload),
     },
-    async (...args) => {
-      posts.push(args);
-      return request(...args);
+    async (request) => {
+      const key = JSON.stringify([
+        request.documentId,
+        request.socketId,
+        request.callMessageId,
+        request.resultMessageId,
+      ]);
+      if (request.type === "get-mock-response")
+        return { saved: savedByCapture.get(key) ?? null };
+      requests.push(request);
+      const reply = await arm();
+      if (reply.ok)
+        savedByCapture.set(key, { resultBody: request.resultBody ?? null });
+      return reply;
     },
   );
   return {
-    ...controls,
-    ...editor,
-    evaluations,
-    posts,
-    open() {
-      controls.opener.dispatchEvent(new Event("click"));
+    opener,
+    status,
+    form,
+    editing,
+    previews,
+    body,
+    cancel,
+    error,
+    requests,
+    setCall,
+    click() {
+      opener.dispatchEvent(new Event("click"));
     },
-    submit() {
-      controls.form.dispatchEvent(new Event("submit", { cancelable: true }));
+    submit(persistent = false) {
+      const event = new Event("submit", { cancelable: true });
+      Object.defineProperty(event, "submitter", {
+        value: persistent ? enable : apply,
+      });
+      form.dispatchEvent(event);
     },
   };
 }
 
-test("prefills the captured reply and arms the exact procedure and topic", async () => {
+test("arms the captured result in its original connection and frame", async () => {
   const ui = setup();
-  ui.setPage(address);
-  ui.setCall(socket, call);
+  ui.setCall(socket, selectCall());
   assert.equal(ui.opener.hidden, false);
-  ui.open();
-  assert.equal(ui.dialog.open, true);
-  assert.equal(ui.procedure.textContent, "/sports#initialDump");
-  assert.equal(ui.topic.textContent, "matches.live");
-  assert.deepEqual(JSON.parse(ui.json.value), call.response.value);
-
-  ui.json.value = '[50, 1, {}, [{"score": 42}]]';
+  assert.equal(ui.requests.length, 0);
+  await setImmediate();
+  ui.click();
+  assert.equal(ui.form.hidden, false);
+  assert.deepEqual(ui.editing, [true]);
+  assert.deepEqual(JSON.parse(ui.body.value), [[], { score: 1 }]);
+  assert.equal(ui.requests.length, 0);
   ui.submit();
-  const { expression, callback } = ui.evaluations[0];
-  assert.equal(
-    runInNewContext(expression, {
-      location: new URL("https://bettom.invalid/"),
-      window: {
-        wampInspectorMockDemo: {
-          getControlToken() {
-            throw new Error("wrong page");
-          },
-        },
-      },
-    }),
-    null,
-  );
-  callback(token);
-  await new Promise(setImmediate);
-
-  const [[url, options]] = ui.posts;
-  assert.equal(url, "http://127.0.0.1:8765/mock-response");
-  assert.equal(options.method, "POST");
-  assert.equal(options.redirect, "error");
-  assert.deepEqual(JSON.parse(options.body), {
-    token,
-    procedure: "/sports#initialDump",
-    topic: "matches.live",
-    response: [50, 1, {}, [{ score: 42 }]],
-  });
-  assert.match(ui.status.textContent, /Next CALL/);
-  assert.equal(ui.apply.disabled, false);
+  await setImmediate();
+  assert.deepEqual(ui.requests, [
+    {
+      type: "arm-mock-response",
+      tabId: 22,
+      socketId: 3,
+      frameId: 19,
+      documentId: "document-19",
+      callMessageId: 41,
+      resultMessageId: 43,
+    },
+  ]);
+  assert.equal(ui.form.hidden, true);
+  assert.deepEqual(ui.editing, [true, false]);
+  assert.equal(ui.status.textContent, "");
+  ui.setCall(socket, { ...selectCall(), mockArmed: true });
+  assert.match(ui.status.textContent, /Next matching CALL/);
+  ui.setCall(socket, selectCall());
+  assert.equal(ui.status.textContent, "");
 });
 
-test("offers mocks only for the selected test WebSocket and rejects invalid JSON", () => {
+test("previews applied JSON and restores it when revisiting and reapplying the same capture", async () => {
   const ui = setup();
-  ui.setPage("https://bettom.invalid/");
-  ui.setCall(socket, call);
-  assert.equal(ui.opener.hidden, true);
-  ui.setPage(address);
-  for (const other of [
-    { ...socket, frameId: 2 },
+  ui.setCall(socket, selectCall());
+  await setImmediate();
+  ui.click();
+  ui.body.value = '[[], {"score": 9}]';
+  ui.submit();
+  await setImmediate();
+  const expected = { kind: "json", value: [[], { score: 9 }] };
+  assert.deepEqual(ui.previews.at(-1), expected);
+  assert.deepEqual(selectCall().response.value, frames[1].parsed);
+
+  ui.setCall(socket, null);
+  ui.setCall(socket, selectCall());
+  await setImmediate();
+  assert.deepEqual(ui.previews.at(-1), expected);
+  ui.click();
+  assert.deepEqual(JSON.parse(ui.body.value), expected.value);
+  ui.submit();
+  await setImmediate();
+  assert.equal(ui.requests.at(-1).resultBody, '[[], {"score": 9}]');
+});
+
+test("enables a persistent mock from the same edited RESULT preview", async () => {
+  const ui = setup();
+  ui.setCall(socket, selectCall());
+  await setImmediate();
+  ui.click();
+  ui.body.value = '[[], {"score": 14}]';
+  ui.submit(true);
+  await setImmediate();
+  assert.equal(ui.requests.length, 1);
+  assert.equal(ui.requests[0].persistent, true);
+  assert.equal(ui.requests[0].resultBody, ui.body.value);
+  assert.deepEqual(ui.previews.at(-1), {
+    kind: "json",
+    value: [[], { score: 14 }],
+  });
+  assert.equal(ui.form.hidden, true);
+});
+
+test("rejects invalid JSON and frame-shaped edits before applying a valid body", async () => {
+  const ui = setup();
+  ui.setCall(socket, selectCall());
+  await setImmediate();
+  ui.click();
+  ui.body.value = "{";
+  ui.submit();
+  assert.match(ui.error.textContent, /valid JSON/);
+  ui.body.value = "[50, 10, {}, []]";
+  ui.submit();
+  assert.match(ui.error.textContent, /RESULT arguments/);
+  ui.body.value = "[".repeat(20_000) + "0" + "]".repeat(20_000);
+  ui.submit();
+  assert.match(ui.error.textContent, /deeply nested/);
+  assert.equal(ui.requests.length, 0);
+  assert.equal(ui.form.hidden, false);
+
+  ui.body.value = '[["fixture"], { "score": 7 }]';
+  ui.submit();
+  await setImmediate();
+  assert.equal(ui.requests[0].resultBody, ui.body.value);
+  assert.equal(ui.error.textContent, "");
+  assert.equal(ui.form.hidden, true);
+});
+
+test("cancel discards the draft without arming the response", async () => {
+  const ui = setup();
+  ui.setCall(socket, selectCall());
+  await setImmediate();
+  ui.click();
+  ui.body.value = "[]";
+  ui.cancel.dispatchEvent(new Event("click"));
+  assert.equal(ui.form.hidden, true);
+  assert.equal(ui.requests.length, 0);
+  ui.click();
+  assert.deepEqual(JSON.parse(ui.body.value), [[], { score: 1 }]);
+});
+
+test("requires a genuine, final captured RESULT and an open JSON WAMP connection", () => {
+  const ui = setup();
+  for (const unsupported of [
     { ...socket, state: "CLOSED" },
-    { ...socket, url: "ws://127.0.0.1:8766/ws" },
+    { ...socket, documentId: null },
+    { ...socket, protocol: "wamp.2.msgpack" },
   ]) {
-    ui.setCall(other, call);
+    ui.setCall(unsupported, selectCall());
     assert.equal(ui.opener.hidden, true);
   }
-  ui.setCall(socket, call);
-  ui.open();
-  ui.json.value = '[48,1,{},"other"]';
-  ui.submit();
-  assert.match(ui.status.textContent, /RESULT|ERROR/);
-  ui.json.value = "{invalid";
-  ui.submit();
-  assert.match(ui.status.textContent, /JSON/);
-  assert.equal(ui.evaluations.length, 0);
+  for (const reply of [
+    { ...frames[1], mocked: true },
+    { ...frames[1], messageId: undefined },
+    { ...frames[1], parsed: [50, 7, { progress: true }, ["partial"]] },
+    { ...frames[1], parsed: [8, 48, 7, {}, "wamp.error.canceled"] },
+  ]) {
+    ui.setCall(socket, selectCall(reply));
+    assert.equal(ui.opener.hidden, true);
+  }
+  ui.click();
+  assert.equal(ui.requests.length, 0);
 });
 
-test("navigation invalidates an apply that is waiting for the demo connection", async () => {
-  const ui = setup();
-  ui.setPage(address);
-  ui.setCall(socket, call);
-  ui.open();
+test("ignores an acknowledgement that belongs to a different selection", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  const ui = setup(() => promise);
+  ui.setCall(socket, selectCall());
+  await setImmediate();
+  ui.click();
   ui.submit();
-  ui.setPage("http://127.0.0.1:8766/");
-  ui.evaluations[0].callback(token);
-  await new Promise(setImmediate);
-  assert.equal(ui.posts.length, 0);
-  assert.equal(ui.dialog.open, false);
-  assert.equal(ui.opener.hidden, true);
+  assert.equal(ui.opener.disabled, true);
+  ui.setCall({ ...socket, documentId: "other-document" }, selectCall());
+  resolve({ ok: true });
+  await setImmediate();
+  assert.equal(ui.form.hidden, true);
+  assert.equal(ui.status.textContent, "");
+  assert.equal(ui.opener.disabled, false);
 });
 
-test("connection and HTTP errors let the same rule be retried", async () => {
-  const ui = setup(async () => ({ ok: false, status: 404 }));
-  ui.setPage(address);
-  ui.setCall(socket, { ...call, topic: null });
-  ui.open();
-  assert.equal(ui.topic.textContent, "No topic");
+test("reports when the selected result cannot be armed", async () => {
+  const ui = setup(async () => ({ ok: false }));
+  ui.setCall(socket, selectCall());
+  await setImmediate();
+  ui.click();
   ui.submit();
-  ui.evaluations[0].callback(null);
-  await new Promise(setImmediate);
-  assert.match(ui.status.textContent, /connection/i);
-  ui.submit();
-  ui.evaluations[1].callback(token);
-  await new Promise(setImmediate);
-  assert.match(ui.status.textContent, /connection/i);
-  assert.equal(ui.apply.disabled, false);
+  await setImmediate();
+  assert.match(ui.error.textContent, /Capture a fresh RESULT/);
+  assert.equal(ui.form.hidden, false);
+  assert.equal(ui.opener.disabled, false);
 });

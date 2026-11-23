@@ -1,179 +1,286 @@
-import {
-  isMockProcedure,
-  isMockResponse,
-  isMockTopic,
-} from "../shared/wamp-mock-response.js";
-import { mockOrigin } from "./panel-mock.js";
+import { sendCaptureRequest } from "../shared/capture-client.js";
 
 /** @typedef {import("../shared/capture-contracts.js").SocketSummary} SocketSummary */
-/** @typedef {{key: string, type: string, direction: string, topic: string | null, id: number | string | null, payload?: {kind: string, value: unknown}, response?: {kind: string, value: unknown}}} CallRow */
+/** @typedef {import("../shared/capture-contracts.js").DecodedPayload} DecodedPayload */
+/** @typedef {{type: string, direction: string, response?: DecodedPayload, responseType?: string, responseMocked?: boolean, mockArmed?: boolean, messageId?: number, responseMessageId?: number}} MessageRow */
+/** @typedef {Extract<import("../shared/capture-contracts.js").CaptureRequest, {type: "get-mock-response"}>} MockTarget */
+/** @typedef {{resultBody: string | null}} SavedMock */
 
-/** @param {string | null} origin @param {SocketSummary | null} socket @param {CallRow | null} row */
-function selectedCall(origin, socket, row) {
-  if (
-    !origin ||
-    socket?.frameId !== 0 ||
-    socket.state !== "OPEN" ||
-    socket.url !== `ws://${new URL(origin).host}/ws` ||
-    row?.type !== "CALL" ||
-    row.direction !== "exchange" ||
-    !Array.isArray(row.payload?.value)
-  ) {
-    return null;
+const MAX_EDITED_BODY = 1_048_576;
+
+/** @param {string} source */
+function readEditedBody(source) {
+  if (source.length > MAX_EDITED_BODY)
+    return { error: "Edited JSON must be 1,048,576 characters or less." };
+
+  let body;
+  try {
+    body = JSON.parse(source);
+  } catch {
+    return { error: "Enter valid JSON." };
   }
 
-  const procedure = row.payload.value[3];
-  const topic = row.topic;
-  if (!isMockProcedure(procedure) || !isMockTopic(topic)) return null;
+  if (
+    !Array.isArray(body) ||
+    body.length > 2 ||
+    (body.length >= 1 && !Array.isArray(body[0])) ||
+    (body.length === 2 &&
+      (!body[1] || typeof body[1] !== "object" || Array.isArray(body[1])))
+  )
+    return {
+      error: "Enter RESULT arguments as [], [args], or [args, kwargs].",
+    };
 
-  const captured =
-    row.response?.kind === "json" ? row.response.value : undefined;
-  return {
-    key: row.key,
-    procedure,
-    topic,
-    example: isMockResponse(captured) ? captured : [50, Number(row.id), {}, []],
-  };
+  try {
+    const frame = [50, 0, {}, ...body];
+    JSON.stringify(frame);
+    structuredClone(frame);
+  } catch {
+    return { error: "The RESULT arguments are too deeply nested." };
+  }
+
+  return { value: source.trim() };
 }
 
-/** @param {typeof chrome.devtools.inspectedWindow} inspectedWindow @param {string} origin */
-function readControlToken(inspectedWindow, origin) {
-  const expression = `(() => {
-    if (location.origin !== ${JSON.stringify(origin)} || location.pathname !== "/")
-      return null;
-    return window.wampInspectorMockDemo?.getControlToken() ?? null;
-  })()`;
-  return new Promise((resolve) => {
-    inspectedWindow.eval(expression, (token, error) => {
-      resolve(!error && typeof token === "string" ? token : null);
-    });
-  });
+/** @param {MockTarget | null} first @param {MockTarget | null} second */
+function sameCapture(first, second) {
+  return (
+    first !== null &&
+    second !== null &&
+    first.tabId === second.tabId &&
+    first.frameId === second.frameId &&
+    first.documentId === second.documentId &&
+    first.socketId === second.socketId &&
+    first.callMessageId === second.callMessageId &&
+    first.resultMessageId === second.resultMessageId
+  );
 }
 
 /**
- * @param {{opener: HTMLButtonElement, dialog: HTMLDialogElement, form: HTMLFormElement, procedure: HTMLElement, topic: HTMLElement, json: HTMLTextAreaElement, apply: HTMLButtonElement, status: HTMLElement}} controls
- * @param {typeof chrome.devtools.inspectedWindow} [inspectedWindow]
- * @param {typeof fetch} [request]
+ * @param {{
+ *   opener: HTMLButtonElement, status: HTMLElement,
+ *   form: HTMLFormElement, body: HTMLTextAreaElement, error: HTMLElement,
+ *   apply: HTMLButtonElement, enable: HTMLButtonElement,
+ *   cancel: HTMLButtonElement, onEdit: (editing: boolean) => void,
+ *   onPreview: (preview: DecodedPayload | null, reveal: boolean) => void
+ * }} controls
+ * @param {typeof sendCaptureRequest} [send]
  */
-export function bindMockResponseEditor(
-  { opener, dialog, form, procedure, topic, json, apply, status },
-  inspectedWindow = chrome.devtools.inspectedWindow,
-  request = fetch,
+export function bindMockResponse(
+  {
+    opener,
+    status,
+    form,
+    body,
+    error,
+    apply,
+    enable,
+    cancel,
+    onEdit,
+    onPreview,
+  },
+  send = sendCaptureRequest,
 ) {
-  /** @type {string | null} */
-  let origin = null;
-  /** @type {ReturnType<typeof selectedCall>} */
-  let selected = null;
-  /** @type {AbortController | null} */
-  let operation = null;
+  /** @type {MockTarget | null} */
+  let target = null;
+  /** @type {MockTarget | null} */
+  let loading = null;
+  /** @type {SavedMock | null} */
+  let saved = null;
+  /** @type {import("../shared/capture-contracts.js").JsonValue[]} */
+  let sample = [];
+  let initialText = "";
+  let arming = false;
+  let canArm = false;
+  let shownArmed = false;
 
-  function cancelApply() {
-    operation?.abort();
-    operation = null;
-    apply.disabled = false;
+  function updateOpener() {
+    opener.hidden = !canArm || !form.hidden;
+    opener.disabled = arming || loading !== null;
   }
 
-  /** @param {SocketSummary | null} socket @param {CallRow | null} row */
-  function setCall(socket, row) {
-    const next = selectedCall(origin, socket, row);
-    const changed = selected?.key !== next?.key;
-    selected = next;
-    opener.hidden = !selected;
-    if (changed && dialog.open) {
-      cancelApply();
-      dialog.close();
+  /** @param {SavedMock | null} entry */
+  function showSaved(entry, reveal = false) {
+    const value =
+      entry?.resultBody != null ? JSON.parse(entry.resultBody) : sample;
+    saved = entry;
+    onPreview(entry ? { kind: "json", value } : null, reveal);
+  }
+
+  /** @param {MockTarget} request */
+  async function loadSaved(request) {
+    loading = request;
+    updateOpener();
+    try {
+      const reply = await send(request);
+      if (target === request && loading === request)
+        showSaved(reply?.saved ?? null);
+    } catch {
+      // The connection history may have disappeared while loading the row.
+    } finally {
+      if (loading === request) {
+        loading = null;
+        updateOpener();
+      }
     }
+  }
+
+  /** @param {boolean} armed */
+  function showArmed(armed) {
+    shownArmed = armed;
+    status.textContent = armed
+      ? "Next matching CALL will use the mock once."
+      : "";
+  }
+
+  /** @param {boolean} editing */
+  function setEditing(editing, restoreFocus = false) {
+    if (form.hidden === !editing) return;
+    form.hidden = !editing;
+    updateOpener();
+    onEdit(editing);
+    if (editing) body.focus({ preventScroll: true });
+    else if (restoreFocus && canArm) opener.focus({ preventScroll: true });
+  }
+
+  /** @param {string} message */
+  function showError(message, invalid = false) {
+    error.textContent = message;
+    if (invalid) body.setAttribute("aria-invalid", "true");
+    else body.removeAttribute("aria-invalid");
+  }
+
+  /** @param {boolean} pending */
+  function setPending(pending) {
+    arming = pending;
+    updateOpener();
+    apply.disabled = pending;
+    enable.disabled = pending;
+    cancel.disabled = pending;
+    body.readOnly = pending;
   }
 
   opener.addEventListener("click", () => {
-    if (!selected) return;
-    procedure.textContent = selected.procedure;
-    topic.textContent = selected.topic ?? "No topic";
-    json.value = JSON.stringify(selected.example, null, 2);
-    status.textContent = "";
-    dialog.showModal();
+    if (!canArm || loading || arming || !form.hidden) return;
+    try {
+      initialText = saved?.resultBody ?? JSON.stringify(sample, null, 2);
+    } catch {
+      status.textContent = "This RESULT could not be opened in the editor.";
+      return;
+    }
+    body.value = initialText;
+    showError("");
+    setEditing(true);
   });
 
-  dialog.addEventListener("close", cancelApply);
+  cancel.addEventListener("click", () => {
+    if (!arming) setEditing(false, true);
+  });
+  form.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !event.isComposing && !arming) {
+      event.preventDefault();
+      setEditing(false, true);
+    }
+  });
+  body.addEventListener("input", () => showError(""));
+
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (!origin || !selected || !dialog.open || operation) return;
-
-    let response;
-    try {
-      response = JSON.parse(json.value);
-    } catch {
-      status.textContent = "Enter valid JSON.";
+    if (!target || !canArm || arming || form.hidden) return;
+    const request = target;
+    const persistent = event.submitter === enable;
+    const edited =
+      body.value === initialText ? null : readEditedBody(body.value);
+    if (edited?.error) {
+      showError(edited.error, true);
+      body.focus();
       return;
     }
-    if (!isMockResponse(response)) {
-      status.textContent = "Enter a final RESULT, a CALL ERROR, or null.";
-      return;
-    }
-
-    const target = selected;
-    const demoOrigin = origin;
-    const applyOperation = new AbortController();
-    operation = applyOperation;
-    apply.disabled = true;
-    status.textContent = "Applying mock response…";
+    const resultBody = edited?.value ?? saved?.resultBody ?? null;
+    showError("");
+    setPending(true);
+    let accepted = false;
     try {
-      const token = await readControlToken(inspectedWindow, demoOrigin);
-      if (applyOperation.signal.aborted) return;
-      if (!token) {
-        status.textContent =
-          "The demo connection is unavailable. Reload the demo and try again.";
-        return;
-      }
-      const outcome = await request(`${demoOrigin}/mock-response`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "omit",
-        redirect: "error",
-        signal: AbortSignal.any([
-          applyOperation.signal,
-          AbortSignal.timeout(5000),
-        ]),
-        body: JSON.stringify({
-          token,
-          procedure: target.procedure,
-          topic: target.topic,
-          response,
-        }),
+      const reply = await send({
+        ...request,
+        type: "arm-mock-response",
+        ...(persistent ? { persistent: true } : {}),
+        ...(resultBody === null ? {} : { resultBody }),
       });
-      if (applyOperation.signal.aborted) return;
-      if (outcome.ok) {
-        status.textContent =
-          "Next CALL with this procedure and topic will use the mock.";
-      } else if (outcome.status === 404) {
-        status.textContent =
-          "The demo connection has closed. Reload the demo and try again.";
-      } else if (outcome.status === 413) {
-        status.textContent =
-          "The mock response exceeds the router’s 32 KiB request limit.";
-      } else {
-        status.textContent =
-          "The router rejected this mock response. Check the JSON and try again.";
-      }
+      accepted = reply?.ok === true;
     } catch {
-      if (!applyOperation.signal.aborted) {
-        status.textContent =
-          "Unable to reach the local mock router. Check the demo connection.";
-      }
+      // The document may disappear while Chrome routes the command.
     } finally {
-      if (operation === applyOperation) {
-        operation = null;
-        apply.disabled = false;
-      }
+      setPending(false);
+    }
+    if (accepted && sameCapture(target, request)) {
+      loading = null;
+      setEditing(false, true);
+      showSaved({ resultBody }, true);
+      updateOpener();
+    } else if (target === request) {
+      showError(
+        persistent
+          ? "Mock could not be enabled. Capture a fresh RESULT and try again."
+          : "Mock could not be armed. Capture a fresh RESULT and try again.",
+      );
     }
   });
 
-  return {
-    /** @param {string} address */
-    setPage(address) {
-      origin = mockOrigin(address);
-      setCall(null, null);
-    },
-    setCall,
+  /**
+   * @param {SocketSummary | null} socket
+   * @param {MessageRow | null} call
+   */
+  return function setCall(socket, call) {
+    const documentId = socket?.documentId;
+    const callMessageId = call?.messageId;
+    const resultMessageId = call?.responseMessageId;
+    const response =
+      call?.response?.kind === "json" ? call.response.value : null;
+    const hasSource =
+      socket?.protocol === "wamp.2.json" &&
+      typeof documentId === "string" &&
+      documentId.length > 0 &&
+      call?.type === "CALL" &&
+      call.direction === "exchange" &&
+      call.responseType === "RESULT" &&
+      !call.responseMocked &&
+      Array.isArray(response) &&
+      typeof callMessageId === "number" &&
+      Number.isSafeInteger(callMessageId) &&
+      callMessageId > 0 &&
+      typeof resultMessageId === "number" &&
+      Number.isSafeInteger(resultMessageId) &&
+      resultMessageId > callMessageId;
+
+    /** @type {MockTarget | null} */
+    const selected = hasSource
+      ? {
+          type: "get-mock-response",
+          tabId: socket.tabId,
+          socketId: socket.id,
+          frameId: socket.frameId,
+          documentId,
+          callMessageId,
+          resultMessageId,
+        }
+      : null;
+    canArm = selected !== null && socket?.state === "OPEN";
+    const armed = call?.mockArmed === true;
+    if (sameCapture(target, selected) || (!target && !selected)) {
+      if (!canArm) setEditing(false);
+      if (shownArmed !== armed) showArmed(armed);
+      updateOpener();
+      return;
+    }
+
+    sample = hasSource ? response.slice(3) : [];
+    target = selected;
+    loading = null;
+    setEditing(false);
+    showSaved(null);
+    updateOpener();
+    showArmed(armed);
+    if (target) void loadSaved(target);
   };
 }
