@@ -63,11 +63,17 @@ With Google Chrome installed, run `npm run test:e2e` to verify sending mock call
 
 ## Package a release
 
+Run this from the repository root with Node.js 22 or newer and the `zip` and `unzip` commands installed.
+
+```sh
+npm run build
+```
+
+Upload the generated `dist/wamp-inspector-<version>.zip` in the Chrome Web Store Developer Dashboard. The ZIP includes the extension runtime and icons, with `manifest.json` at the root.
+
 Run **Package WAMP Inspector** from the repository's **Actions** tab to download the extension ZIP as a workflow artifact. The workflow must be on the default branch before you can run it manually.
 
 For a GitHub release, push a tag that matches the version in `manifest.json`, such as `v0.1.0`. After checks pass, the workflow attaches `wamp-inspector-0.1.0.zip` to a draft on the **Releases** page. Review the draft and publish it when ready.
-
-The ZIP contains `manifest.json` at its root, along with the runtime files and icons. The same ZIP format is used for Chrome Web Store submissions.
 
 ## Data and permissions
 
