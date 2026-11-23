@@ -1,7 +1,9 @@
+import { isMockTopic } from "../shared/wamp-mock-response.js";
+
 const scenarios = new Set(["demo.success", "demo.error", "demo.no_response"]);
 
 /** @param {string} address */
-function mockOrigin(address) {
+export function mockOrigin(address) {
   try {
     const url = new URL(address);
     return url.protocol === "http:" &&
@@ -14,12 +16,14 @@ function mockOrigin(address) {
   }
 }
 
-/** @param {string} origin @param {string} scenario */
-function mockExpression(origin, scenario) {
+/** @param {string} origin @param {string} scenario @param {string | null} topic */
+function mockExpression(origin, scenario, topic) {
   return `(() => {
     if (location.origin !== ${JSON.stringify(origin)} || location.pathname !== "/")
       return { status: "unavailable" };
-    return window.wampInspectorMockDemo?.sendCall(${JSON.stringify(scenario)})
+    return window.wampInspectorMockDemo?.sendCall(
+      ${JSON.stringify(scenario)}, ${JSON.stringify(topic)}
+    )
       ?? { status: "unavailable" };
   })()`;
 }
@@ -46,11 +50,11 @@ function statusMessage(response) {
 }
 
 /**
- * @param {{trigger: HTMLButtonElement, popover: HTMLElement, form: HTMLFormElement, scenario: HTMLSelectElement, send: HTMLButtonElement, status: HTMLElement}} controls
+ * @param {{trigger: HTMLButtonElement, popover: HTMLElement, form: HTMLFormElement, scenario: HTMLSelectElement, topic?: HTMLInputElement, send: HTMLButtonElement, status: HTMLElement}} controls
  * @param {typeof chrome.devtools.inspectedWindow} [inspectedWindow]
  */
 export function bindMockSender(
-  { trigger, popover, form, scenario, send, status },
+  { trigger, popover, form, scenario, topic, send, status },
   inspectedWindow = chrome.devtools.inspectedWindow,
 ) {
   /** @type {string | null} */
@@ -62,6 +66,11 @@ export function bindMockSender(
     if (!origin || send.disabled) return;
     if (!scenarios.has(scenario.value)) {
       status.textContent = statusMessage({ status: "invalid_scenario" });
+      return;
+    }
+    const subtopic = topic?.value.trim() ? topic.value : null;
+    if (!isMockTopic(subtopic)) {
+      status.textContent = "Enter a topic of up to 512 characters.";
       return;
     }
 
@@ -78,7 +87,7 @@ export function bindMockSender(
 
     try {
       inspectedWindow.eval(
-        mockExpression(origin, scenario.value),
+        mockExpression(origin, scenario.value, subtopic),
         (response, exception) => showResult(exception ? undefined : response),
       );
     } catch {

@@ -1,11 +1,20 @@
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
-import { WebSocketServer } from "ws";
+import { WebSocket, WebSocketServer } from "ws";
+import {
+  isMockProcedure,
+  isMockResponse,
+  isMockTopic,
+} from "../../src/shared/wamp-mock-response.js";
 
 const host = "127.0.0.1";
 const subprotocol = "wamp.2.json";
+const mockResponsePath = "/mock-response";
+const maxMockBody = 32 * 1024;
+const maxMockRules = 32;
 const assets = new Map([
   ["/", ["index.html", "text/html"]],
   ["/demo.js", ["demo.js", "text/javascript"]],
@@ -41,8 +50,26 @@ function isCall(frame) {
   );
 }
 
-function replyToCall(frame, send) {
-  const [, id, , procedure] = frame;
+function mockKey(procedure, topic) {
+  return JSON.stringify([procedure, topic]);
+}
+
+function replyToCall(frame, send, rules) {
+  const [, id, , procedure, , kwargs] = frame;
+  const topic =
+    typeof kwargs?.topic === "string" && kwargs.topic.trim()
+      ? kwargs.topic
+      : null;
+  const key = mockKey(procedure, topic);
+  if (rules.has(key)) {
+    const reply = rules.get(key);
+    rules.delete(key);
+    if (reply) {
+      const idIndex = reply[0] === 50 ? 1 : 2;
+      send(reply.map((value, index) => (index === idIndex ? id : value)));
+    }
+    return;
+  }
   switch (procedure) {
     case "demo.success":
       send([50, id, {}, ["Mock result"]]);
@@ -57,17 +84,108 @@ function replyToCall(frame, send) {
   }
 }
 
+async function readMockBody(request) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request.iterator({ destroyOnReturn: false })) {
+    size += chunk.length;
+    if (size > maxMockBody) return { status: 413 };
+    chunks.push(chunk);
+  }
+  return { rule: JSON.parse(Buffer.concat(chunks).toString("utf8")) };
+}
+
+function isMockRule(rule) {
+  return (
+    isObject(rule) &&
+    typeof rule.token === "string" &&
+    isMockProcedure(rule.procedure) &&
+    isMockTopic(rule.topic) &&
+    isMockResponse(rule.response)
+  );
+}
+
+async function handleMockResponse(request, response, origin, sessions) {
+  const requester = request.headers.origin;
+  if (
+    requester &&
+    requester !== origin &&
+    !/^chrome-extension:\/\/[a-p]{32}$/.test(requester)
+  ) {
+    response.writeHead(403).end();
+    return;
+  }
+
+  const headers = { "Cache-Control": "no-store", Vary: "Origin" };
+  if (requester) headers["Access-Control-Allow-Origin"] = requester;
+  if (request.method === "OPTIONS") {
+    response
+      .writeHead(204, {
+        ...headers,
+        "Access-Control-Allow-Methods": "POST",
+        "Access-Control-Allow-Headers": "Content-Type",
+      })
+      .end();
+    return;
+  }
+  if (request.method !== "POST") {
+    response.writeHead(405, { ...headers, Allow: "POST, OPTIONS" }).end();
+    return;
+  }
+  if (
+    request.headers["content-type"]?.split(";")[0].trim().toLowerCase() !==
+    "application/json"
+  ) {
+    response.writeHead(415, headers).end();
+    return;
+  }
+
+  let rule;
+  try {
+    const body = await readMockBody(request);
+    if (body.status === 413) {
+      request.resume();
+      response.writeHead(413, { ...headers, Connection: "close" }).end();
+      return;
+    }
+    rule = body.rule;
+  } catch {
+    if (!response.destroyed) response.writeHead(400, headers).end();
+    return;
+  }
+
+  if (!isMockRule(rule)) {
+    response.writeHead(400, headers).end();
+    return;
+  }
+  const session = sessions.get(rule.token);
+  if (!session || session.socket.readyState !== WebSocket.OPEN) {
+    response.writeHead(404, headers).end();
+    return;
+  }
+  const key = mockKey(rule.procedure, rule.topic);
+  if (!session.rules.has(key) && session.rules.size >= maxMockRules) {
+    response.writeHead(409, headers).end();
+    return;
+  }
+  session.rules.set(key, rule.response);
+  response.writeHead(204, headers).end();
+}
+
 function denyUpgrade(socket, status) {
   socket.once("error", () => socket.destroy());
   socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\n\r\n`);
 }
 
-function handleSession(socket, sessionId) {
+function handleSession(socket, sessionId, sessions) {
   let welcomed = false;
+  const token = randomUUID();
+  const rules = new Map();
   const send = (frame) => socket.send(JSON.stringify(frame));
   const reject = () => socket.close(1002, "Invalid WAMP message");
 
   socket.on("error", () => socket.terminate());
+  socket.once("close", () => sessions.delete(token));
   socket.on("message", (data, binary) => {
     if (binary) return reject();
 
@@ -93,12 +211,13 @@ function handleSession(socket, sessionId) {
         return socket.close(1000);
       }
       welcomed = true;
-      send([2, sessionId, { roles: { dealer: {} } }]);
+      sessions.set(token, { socket, rules });
+      send([2, sessionId, { roles: { dealer: {} }, x_mock_control: token }]);
       return;
     }
 
     if (frame[0] === 48 && isCall(frame)) {
-      return replyToCall(frame, send);
+      return replyToCall(frame, send, rules);
     }
     if (
       frame[0] === 6 &&
@@ -118,14 +237,19 @@ export async function startMockRouter({ port = 8765 } = {}) {
   let authority;
   let origin;
   let nextSessionId = 1;
+  const sessions = new Map();
 
   const server = createServer((request, response) => {
+    if (request.headers.host !== authority) {
+      response.writeHead(404).end();
+      return;
+    }
+    if (request.url === mockResponsePath) {
+      void handleMockResponse(request, response, origin, sessions);
+      return;
+    }
     const asset = demo.get(request.url);
-    if (
-      request.headers.host !== authority ||
-      !asset ||
-      request.method !== "GET"
-    ) {
+    if (!asset || request.method !== "GET") {
       response.writeHead(404).end();
       return;
     }
@@ -143,7 +267,9 @@ export async function startMockRouter({ port = 8765 } = {}) {
     maxPayload: 32 * 1024,
     handleProtocols: (requested) => requested.has(subprotocol) && subprotocol,
   });
-  sockets.on("connection", (socket) => handleSession(socket, nextSessionId++));
+  sockets.on("connection", (socket) =>
+    handleSession(socket, nextSessionId++, sessions),
+  );
   server.on("upgrade", (request, socket, head) => {
     if (
       request.headers.host !== authority ||

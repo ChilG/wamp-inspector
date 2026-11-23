@@ -89,6 +89,31 @@ async function attach(root: CDPSession, targetId: string) {
   return { command, evaluate };
 }
 
+async function captureDevTools(
+  frontend: Awaited<ReturnType<typeof attach>>,
+  filename: string,
+) {
+  let data: string;
+  try {
+    ({ data } = await frontend.command<{ data: string }>(
+      "Page.captureScreenshot",
+      { format: "png", fromSurface: false },
+    ));
+  } catch (error) {
+    // Native window capture can be unavailable in a headed test session.
+    if (
+      error instanceof Error &&
+      error.message === "Unable to capture screenshot"
+    )
+      return;
+    throw error;
+  }
+  await writeFile(
+    test.info().outputPath(filename),
+    Buffer.from(data, "base64"),
+  );
+}
+
 async function waitForTarget(
   root: CDPSession,
   matches: (target: Target) => boolean,
@@ -128,6 +153,62 @@ async function openInspector(root: CDPSession, existing: Set<string>) {
   );
   const { evaluate } = await attach(root, panel);
   return { inspect: evaluate, frontend };
+}
+
+type InspectPanel = Awaited<ReturnType<typeof openInspector>>["inspect"];
+
+async function sendMockCall(
+  inspect: InspectPanel,
+  procedure: string,
+  topic = "",
+) {
+  await inspect(
+    `(() => {
+      const scenario = document.querySelector('#mock-scenario');
+      if (!scenario.checkVisibility()) document.querySelector('#mock-open').click();
+      scenario.value = ${JSON.stringify(procedure)};
+      scenario.dispatchEvent(new Event('change', { bubbles: true }));
+      const topic = document.querySelector('#mock-topic');
+      topic.value = ${JSON.stringify(topic)};
+      topic.dispatchEvent(new Event('input', { bubbles: true }));
+      document.querySelector('#mock-send').click();
+    })()`,
+    true,
+  );
+}
+
+async function openCallReply(inspect: InspectPanel, id: number, topic: string) {
+  const row = `[...document.querySelectorAll('button[aria-controls="message-inspector"]')].find(
+    (button) => button.querySelector('.preview')?.textContent === 'demo.success' &&
+      button.querySelector('.request-id')?.textContent === ${JSON.stringify(`#${id}`)})`;
+
+  await expect
+    .poll(() =>
+      inspect(`(() => {
+        const call = ${row};
+        return call?.querySelector('.latency')?.title === 'RESULT'
+          ? call.querySelector('.row-topic')?.textContent : null;
+      })()`),
+    )
+    .toBe(topic);
+  await inspect(
+    `(() => {
+      const call = ${row};
+      if (call.getAttribute('aria-expanded') !== 'true') call.click();
+    })()`,
+    true,
+  );
+}
+
+function readOpenReply(inspect: InspectPanel) {
+  return inspect<unknown[] | null>(`(() => {
+    const reply = [...document.querySelectorAll('#payload-contents > section')]
+      .find(section => section.querySelector('strong')?.textContent === 'Response');
+    const tree = reply?.querySelector('.json-tree');
+    if (!tree) return null;
+    tree.querySelector('.json-branch[aria-expanded="false"]')?.click();
+    return JSON.parse(tree.textContent);
+  })()`);
 }
 
 test("sends all mock CALL scenarios from WAMP Inspector and captures their outcomes", async () => {
@@ -205,16 +286,7 @@ test("sends all mock CALL scenarios from WAMP Inspector and captures their outco
       },
     ];
     for (const { procedure, id, result, response } of scenarios) {
-      await inspect(
-        `(() => {
-        const scenario = document.querySelector('#mock-scenario');
-        if (!scenario.checkVisibility()) document.querySelector('#mock-open').click();
-        scenario.value = ${JSON.stringify(procedure)};
-        scenario.dispatchEvent(new Event('change', { bubbles: true }));
-        document.querySelector('#mock-send').click();
-      })()`,
-        true,
-      );
+      await sendMockCall(inspect, procedure);
       if (id === 1) {
         await expect
           .poll(() =>
@@ -265,15 +337,83 @@ test("sends all mock CALL scenarios from WAMP Inspector and captures their outco
           pending: response === null,
         });
     }
+    await test.step("mocks only the next CALL with the selected topic", async () => {
+      const procedure = "demo.success";
+      const selectedTopic = "score.live";
+      const otherTopic = "score.pre_match";
+      const mockReply = [50, 999, {}, ["Topic-specific reply"]];
+      const result = page.getByRole("status", { name: "Call result" });
+
+      await sendMockCall(inspect, procedure, selectedTopic);
+      await expect(result).toHaveText(/Success.*request 4/);
+      await openCallReply(inspect, 4, selectedTopic);
+      await expect
+        .poll(() =>
+          inspect<boolean>(
+            "document.querySelector('#mock-response-open')?.checkVisibility()",
+          ),
+        )
+        .toBe(true);
+      await inspect(
+        "document.querySelector('#mock-response-open').click()",
+        true,
+      );
+      await expect
+        .poll(() =>
+          inspect(`(() => {
+            const field = document.querySelector('#mock-response-json');
+            return field?.value ? JSON.parse(field.value) : null;
+          })()`),
+        )
+        .toEqual([50, 4, {}, ["Mock result"]]);
+      await inspect(
+        `(() => {
+          const response = document.querySelector('#mock-response-json');
+          response.value = ${JSON.stringify(JSON.stringify(mockReply))};
+          response.dispatchEvent(new Event('input', { bubbles: true }));
+          document.querySelector('#mock-response-apply').click();
+        })()`,
+        true,
+      );
+      await expect
+        .poll(() =>
+          inspect(
+            "document.querySelector('#mock-response-status')?.textContent",
+          ),
+        )
+        .toContain("Next CALL");
+      await expect
+        .poll(() =>
+          inspect(`(() => {
+        const dialog = document.querySelector('#mock-response-editor');
+        const bounds = dialog.getBoundingClientRect();
+        return dialog.open && bounds.left >= 0 && bounds.right <= innerWidth &&
+          bounds.top >= 0 && bounds.bottom <= innerHeight;
+      })()`),
+        )
+        .toBe(true);
+      await page.bringToFront();
+      await captureDevTools(frontend, "wamp-mock-response-editor.png");
+      await inspect(
+        "document.querySelector('#mock-response-close').click()",
+        true,
+      );
+
+      const replies = [
+        { id: 5, topic: otherTopic, payload: ["Mock result"] },
+        { id: 6, topic: selectedTopic, payload: mockReply[3] },
+        { id: 7, topic: selectedTopic, payload: ["Mock result"] },
+      ];
+      for (const { id, topic, payload } of replies) {
+        await sendMockCall(inspect, procedure, topic);
+        await expect(result).toHaveText(new RegExp(`Success.*request ${id}`));
+        await openCallReply(inspect, id, topic);
+        await expect
+          .poll(() => readOpenReply(inspect))
+          .toEqual([50, id, {}, payload]);
+      }
+    });
     expect(errors).toEqual([]);
-    const { data } = await frontend.command<{ data: string }>(
-      "Page.captureScreenshot",
-      { format: "png", fromSurface: false },
-    );
-    await writeFile(
-      test.info().outputPath("wamp-devtools-mock.png"),
-      Buffer.from(data, "base64"),
-    );
 
     const unrelated = "http://unrelated.example.test/";
     await page.route(unrelated, (route) =>
@@ -287,6 +427,13 @@ test("sends all mock CALL scenarios from WAMP Inspector and captures their outco
       .poll(() => inspect("document.querySelector('#inspected-url')?.title"))
       .toBe(unrelated);
     await expect.poll(mockVisible).toBe(false);
+    await expect
+      .poll(() =>
+        inspect<boolean>(
+          "document.querySelector('#mock-response-open')?.checkVisibility()",
+        ),
+      )
+      .toBe(false);
   } finally {
     await chrome?.close();
     await router?.close();

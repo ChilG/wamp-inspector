@@ -193,6 +193,15 @@
               <h2 id="inspector-title" class="inspector-title">JSON preview</h2>
               <code id="inspected-message" class="inspector-label clip"></code>
               <button
+                id="mock-response-open"
+                class="control"
+                type="button"
+                aria-haspopup="dialog"
+                hidden
+              >
+                Mock response
+              </button>
+              <button
                 id="toggle-payload-search"
                 class="control"
                 type="button"
@@ -290,8 +299,57 @@
         </select>
         <button id="mock-send" class="control" type="submit">Send CALL</button>
       </div>
+      <label class="mock-topic-field" for="mock-topic">
+        <span>Topic (optional)</span>
+        <input
+          id="mock-topic"
+          class="search-input"
+          type="text"
+          maxlength="512"
+        />
+      </label>
       <p id="mock-status" role="status"></p>
     </form>
+
+    <dialog
+      id="mock-response-editor"
+      class="mock-response-dialog"
+      aria-labelledby="mock-response-heading"
+    >
+      <header class="mock-response-head">
+        <h2 id="mock-response-heading">Mock response</h2>
+        <form method="dialog">
+          <button id="mock-response-close" class="control" type="submit">
+            Close
+          </button>
+        </form>
+      </header>
+      <dl class="mock-response-target">
+        <dt>Procedure</dt>
+        <dd id="mock-response-procedure"></dd>
+        <dt>Topic</dt>
+        <dd id="mock-response-topic"></dd>
+      </dl>
+      <form id="mock-response-form" class="mock-response-form">
+        <label for="mock-response-json">Response JSON</label>
+        <textarea
+          id="mock-response-json"
+          aria-describedby="mock-response-help"
+          spellcheck="false"
+          autofocus
+        ></textarea>
+        <p id="mock-response-help">
+          Use a final RESULT, a CALL ERROR, or null for no response. The router
+          fills in the request ID on the next matching CALL.
+        </p>
+        <div class="mock-response-actions">
+          <button id="mock-response-apply" class="control" type="submit">
+            Apply once
+          </button>
+          <p id="mock-response-status" role="status"></p>
+        </div>
+      </form>
+    </dialog>
 
     <form
       id="message-filters"

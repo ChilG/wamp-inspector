@@ -8,6 +8,7 @@ const filename = fileURLToPath(
   new URL("../tools/mock-wamp/demo.js", import.meta.url),
 );
 const source = readFileSync(filename, "utf8");
+const testToken = "7c67e1a6-4800-4a45-aa30-f3ababbaa9c5";
 
 function setup() {
   const sent = [];
@@ -76,13 +77,14 @@ function setup() {
     sent,
     socket,
     timers,
-    sendCall: (procedure) =>
-      structuredClone(window.wampInspectorMockDemo.sendCall(procedure)),
+    sendCall: (procedure, topic) =>
+      structuredClone(window.wampInspectorMockDemo.sendCall(procedure, topic)),
+    getControlToken: () => window.wampInspectorMockDemo.getControlToken(),
     receive,
     connect() {
       socket.readyState = MockSocket.OPEN;
       socket.dispatchEvent(new Event("open"));
-      receive([2, 101, {}]);
+      receive([2, 101, { x_mock_control: testToken }]);
     },
   };
 }
@@ -159,4 +161,22 @@ test("closing the socket clears a pending DevTools call", () => {
   assert.equal(demo.button.disabled, true);
   assert.match(demo.result.textContent, /Connection closed/);
   assert.equal(demo.sendCall("demo.success").status, "not_connected");
+});
+
+test("exposes the control token only for a connected demo and sends an exact CALL topic", () => {
+  const demo = setup();
+  assert.equal(demo.getControlToken(), null);
+  demo.connect();
+  assert.equal(demo.getControlToken(), testToken);
+  assert.equal(demo.sendCall("demo.success", "football").status, "sent");
+  assert.deepEqual(demo.sent[1], [
+    48,
+    1,
+    {},
+    "demo.success",
+    [],
+    { topic: "football" },
+  ]);
+  demo.socket.readyState = 3;
+  assert.equal(demo.getControlToken(), null);
 });

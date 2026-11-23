@@ -10,6 +10,7 @@ const socket = new WebSocket(`ws://${window.location.host}/ws`, "wamp.2.json");
 let nextRequestId = 1;
 let connected = false;
 let pending = null;
+let controlToken = null;
 
 function finishCall(message) {
   if (!pending) return;
@@ -30,6 +31,8 @@ socket.addEventListener("message", (event) => {
 
   if (type === 2) {
     connected = true;
+    const token = detailsOrRequestId?.x_mock_control;
+    controlToken = typeof token === "string" ? token : null;
     connectionStatus.textContent = "Connected";
     sendButton.disabled = false;
   }
@@ -49,6 +52,7 @@ socket.addEventListener("message", (event) => {
 
 function onDisconnect(message) {
   connected = false;
+  controlToken = null;
   connectionStatus.textContent = message;
   finishCall("Connection closed before a response arrived.");
   sendButton.disabled = true;
@@ -58,15 +62,26 @@ socket.addEventListener("close", (event) => {
   onDisconnect(event.wasClean ? "Disconnected" : "Connection failed");
 });
 
-function sendCall(procedure) {
-  if (!procedures.has(procedure)) return { status: "invalid_scenario" };
-  if (!connected || socket.readyState !== WebSocket.OPEN)
-    return { status: "not_connected" };
+function hasOpenSession() {
+  return connected && socket.readyState === WebSocket.OPEN;
+}
+
+function sendCall(procedure, topic = null) {
+  if (
+    !procedures.has(procedure) ||
+    (topic !== null &&
+      (typeof topic !== "string" || !topic.trim() || topic.length > 512))
+  )
+    return { status: "invalid_scenario" };
+  if (!hasOpenSession()) return { status: "not_connected" };
   if (pending) return { status: "busy" };
 
   const id = nextRequestId;
+  const frame = [48, id, {}, procedure];
   try {
-    socket.send(JSON.stringify([48, id, {}, procedure]));
+    socket.send(
+      JSON.stringify(topic === null ? frame : [...frame, [], { topic }]),
+    );
   } catch {
     result.textContent = "Unable to send the mock CALL.";
     return { status: "unavailable" };
@@ -83,7 +98,10 @@ function sendCall(procedure) {
   return { status: "sent", requestId: id };
 }
 
-window.wampInspectorMockDemo = Object.freeze({ sendCall });
+window.wampInspectorMockDemo = Object.freeze({
+  sendCall,
+  getControlToken: () => (hasOpenSession() ? controlToken : null),
+});
 
 form.addEventListener("submit", (event) => {
   event.preventDefault();

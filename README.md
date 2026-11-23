@@ -36,6 +36,14 @@ The extension runs directly from the repository with no build step. After editin
 
 The DevTools control sends the selected mock through the demo's `wamp.2.json` WebSocket on loopback. The demo page also has a **Send CALL** control that uses the same connection.
 
+### Mock one procedure and topic
+
+1. In **Send mock**, enter a topic such as `score.live` and send a CALL.
+2. Select the captured CALL, click **Mock response** in JSON preview, edit the response JSON, and click **Apply once**.
+3. Send another CALL with the same procedure and topic. The router applies the mock to that request ID and then clears the rule. For example, a rule for `demo.success` with `score.live` leaves `demo.success` with `score.pre_match` alone.
+
+The editor supports a final WAMP `RESULT`, a WAMP `ERROR` for a CALL, or `null` to withhold the reply. The rule lives on the current loopback demo connection. The editor marks a CALL with no `kwargs.topic` as **No topic** and matches another CALL without that field.
+
 ## Project layout
 
 ```text

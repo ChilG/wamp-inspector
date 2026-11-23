@@ -6,6 +6,7 @@ import { PayloadPanelResize } from "./panel-resize.js";
 import { bindTopicColumn, MessageColumnResize } from "./panel-columns.js";
 import { subscribeToCapture } from "./panel-capture-stream.js";
 import { bindMockSender } from "./panel-mock.js";
+import { bindMockResponseEditor } from "./panel-mock-response.js";
 import { PayloadColumns } from "./panel-payload-columns.js";
 import { sendCaptureRequest } from "../shared/capture-client.js";
 
@@ -38,8 +39,20 @@ const setMockPage = bindMockSender({
   popover: $("#mock-controls"),
   form: $("#mock-controls"),
   scenario: $("#mock-scenario"),
+  topic: $("#mock-topic"),
   send: $("#mock-send"),
   status: $("#mock-status"),
+});
+
+const mockResponseEditor = bindMockResponseEditor({
+  opener: $("#mock-response-open"),
+  dialog: $("#mock-response-editor"),
+  form: $("#mock-response-form"),
+  procedure: $("#mock-response-procedure"),
+  topic: $("#mock-response-topic"),
+  json: $("#mock-response-json"),
+  apply: $("#mock-response-apply"),
+  status: $("#mock-response-status"),
 });
 
 const clockOptions = {
@@ -105,6 +118,8 @@ function setPageUrl(url) {
   text(page, address.replace(/^https?:\/\//, "") || "Unknown page URL");
   page.title = address;
   setMockPage(address);
+  mockResponseEditor.setPage(address);
+  updateMockResponseTarget();
 }
 
 function stateLabel(state) {
@@ -159,6 +174,13 @@ function compareSockets(first, second) {
   );
 }
 
+function updateMockResponseTarget() {
+  mockResponseEditor.setCall(
+    sockets.get(selectedSocketKey)?.socket ?? null,
+    rowViews.get(selectedMessageKey)?.message ?? null,
+  );
+}
+
 function updateSocketSelection() {
   for (const [key, { button }] of sockets) {
     const pressed = String(key === selectedSocketKey);
@@ -168,6 +190,7 @@ function updateSocketSelection() {
   const selected = selectedSocketKey ?? "";
   if (picker.value !== selected) picker.value = selected;
   renderSocketMetadata(sockets.get(selectedSocketKey)?.socket);
+  updateMockResponseTarget();
 }
 
 /** @param {import("../shared/capture-contracts.js").SocketSummary[]} socketList */
@@ -260,6 +283,7 @@ function closeInspector(restoreFocus = false) {
   const button = rowViews.get(selectedMessageKey)?.button;
   button?.setAttribute("aria-expanded", "false");
   selectedMessageKey = null;
+  updateMockResponseTarget();
   inspector.hidden = true;
   payloadSearch.close();
   payloadSearch.setPayloads();
@@ -311,6 +335,7 @@ function toggleInspector(key) {
   const exchange = message.direction === "exchange";
   closeInspector();
   selectedMessageKey = key;
+  updateMockResponseTarget();
   button.setAttribute("aria-expanded", "true");
   text(
     $("#inspected-message"),
@@ -447,6 +472,7 @@ function renderMessages(socket) {
     payloadSearch.setPayloads(after.payload, after.response);
   }
   rowViews = next;
+  updateMockResponseTarget();
   messageSearch.setRows(
     [...rowViews.values()],
     "No WAMP messages on this connection.",
