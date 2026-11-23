@@ -5,6 +5,7 @@ import { PayloadSearch } from "./panel-payload-search.js";
 import { PayloadPanelResize } from "./panel-resize.js";
 import { bindTopicColumn, MessageColumnResize } from "./panel-columns.js";
 import { subscribeToCapture } from "./panel-capture-stream.js";
+import { bindMcpSharing } from "./panel-mcp-sharing.js";
 import { PayloadColumns } from "./panel-payload-columns.js";
 import { sendCaptureRequest } from "../shared/capture-client.js";
 
@@ -612,6 +613,7 @@ chrome.devtools.inspectedWindow.eval("location.href", (url, exception) => {
 
 clearMessageView("No WAMP messages captured yet.");
 renderSockets([]);
+bindMcpSharing($("#mcp-share"), $("#mcp-share-status"), tabId);
 subscribeToCapture(tabId, onCaptureUpdate, () => {
   setCaptureStatus("Reconnecting to the background worker…");
 });

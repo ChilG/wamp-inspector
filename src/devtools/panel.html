@@ -9,18 +9,34 @@
   </head>
   <body>
     <main class="shell">
-      <header class="toolbar">
-        <h1><span class="mark" aria-hidden="true"></span>WAMP Inspector</h1>
-        <code id="inspected-url" class="page-url clip">Reading page URL…</code>
-        <button
-          id="columns-button"
-          class="control"
-          type="button"
-          popovertarget="payload-columns"
-        >
-          Columns
-        </button>
-        <button id="clear" class="control" type="button">Clear messages</button>
+      <header>
+        <div class="toolbar">
+          <h1><span class="mark" aria-hidden="true"></span>WAMP Inspector</h1>
+          <code id="inspected-url" class="page-url clip"
+            >Reading page URL…</code
+          >
+          <button
+            id="columns-button"
+            class="control"
+            type="button"
+            popovertarget="payload-columns"
+          >
+            Columns
+          </button>
+          <button id="clear" class="control" type="button">
+            Clear messages
+          </button>
+          <button
+            id="mcp-share"
+            class="control"
+            type="button"
+            title="Share this tab's WAMP metadata with a local MCP client"
+            aria-describedby="mcp-share-status"
+          >
+            Share with MCP
+          </button>
+        </div>
+        <p id="mcp-share-status" class="mcp-share-status" role="status"></p>
       </header>
 
       <div class="workspace">

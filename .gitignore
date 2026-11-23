@@ -65,3 +65,6 @@ out/
 # Chrome extension packages and private signing keys
 *.crx
 *.pem
+
+# Playwright results
+test-results/

@@ -1,4 +1,5 @@
 import { readWampFrame } from "../shared/wamp-frame.js";
+import { createMcpSharing } from "./mcp-sharing.js";
 
 /** @typedef {import("../shared/capture-contracts.js").CapturedFrame} CapturedFrame */
 /** @typedef {import("../shared/capture-contracts.js").CapturePortRequest} CapturePortRequest */
@@ -111,7 +112,17 @@ function queueCaptureUpdate(
     captureUpdateTimer = setTimeout(flushCaptureUpdates, CAPTURE_UPDATE_DELAY);
 }
 
+const mcpSharing = createMcpSharing(chrome, (tabId) =>
+  Array.from(socketsByTab.get(tabId) ?? []).filter(([, socket]) =>
+    hasWampSubprotocol(socket),
+  ),
+);
+
 chrome.runtime.onConnect.addListener((port) => {
+  if (port.name === "wamp-mcp-share") {
+    mcpSharing.connect(port);
+    return;
+  }
   if (port.name !== "wamp-capture") return;
   /** @type {number | null} */
   let tabId = null;
@@ -356,8 +367,13 @@ chrome.runtime.onMessage.addListener(
   },
 );
 
+chrome.webNavigation.onBeforeNavigate?.addListener(({ tabId, frameId }) => {
+  if (frameId === 0) mcpSharing.revokeTab(tabId);
+});
+
 chrome.webNavigation.onCommitted.addListener((details) => {
   if (details.frameId === 0) {
+    mcpSharing.revokeTab(details.tabId);
     socketsByTab.set(details.tabId, new Map());
     queueCaptureUpdate(details.tabId, { connections: true });
     return;
@@ -394,6 +410,11 @@ chrome.webNavigation.onCommitted.addListener((details) => {
   });
 });
 
+chrome.tabs.onReplaced?.addListener((_, removedTabId) => {
+  mcpSharing.revokeTab(removedTabId);
+});
+
 chrome.tabs.onRemoved.addListener((tabId) => {
+  mcpSharing.revokeTab(tabId);
   socketsByTab.delete(tabId);
 });

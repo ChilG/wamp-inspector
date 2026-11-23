@@ -80,6 +80,15 @@ time {
   background: var(--toolbar);
   border-bottom: 1px solid var(--line);
 }
+.mcp-share-status {
+  color: var(--muted);
+  background: var(--toolbar);
+  overflow-wrap: anywhere;
+}
+.mcp-share-status:not(:empty) {
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--line);
+}
 h1 {
   display: flex;
   align-items: center;
@@ -908,6 +917,7 @@ button.json-key:hover {
 @media (max-width: 350px) {
   .toolbar {
     gap: 5px;
+    flex-wrap: wrap;
   }
   .toolbar .page-url {
     display: none;

@@ -22,6 +22,37 @@ The extension runs directly from the repository with no build step. After editin
 - Enable **Topic** from **Columns**, or click a key in JSON Preview to add that field as a custom column. Drag a column divider to resize it.
 - Use **Clear messages** to clear the current tab’s message history and keep its connection list. The extension retains the latest 1,000 frames per recognized WAMP type per connection.
 
+## Share live metadata with Codex
+
+This integration uses Google Chrome on macOS, Codex CLI, and Node.js 22 or newer.
+
+1. Run `npm ci` from the repo. Load the unpacked extension and copy its ID from `chrome://extensions`.
+2. Register the Chrome Native Messaging host and add the local MCP server to Codex. Use the Node.js 22+ binary on your `PATH`.
+
+   ```sh
+   npm run mcp:install -- YOUR_EXTENSION_ID
+   codex mcp add wamp-inspector -- "$(command -v node)" "$PWD/tools/mcp/server.js"
+   ```
+
+3. Restart Codex. In Chrome, open WAMP Inspector in the tab's DevTools, select **Share with MCP**, and grant Native Messaging access if asked.
+4. Ask Codex to list WAMP connections and inspect a connection, for example, “Which CALLs are still pending?” Codex reads the current capture when it calls a tool.
+
+Only one tab can share at a time. **Stop sharing**, closing the tab or DevTools, or reloading the page ends access. The tools inspect WAMP JSON frames and return metadata such as procedure, topic, status, and latency. Payloads, URLs, and authentication fields stay in Chrome. Data already returned to Codex can remain in the Codex session.
+
+If the panel cannot find the host, check that the installed Chrome extension ID matches the one passed to the installer and that the checkout has not moved. Run `npm run mcp:uninstall` to remove the Chrome host registration and `codex mcp remove wamp-inspector` to remove the Codex configuration.
+
+## Test with the local mock router
+
+Run `npm run mock:wamp` and open `http://127.0.0.1:8765` in Chrome. Open WAMP Inspector and reload the page to capture the connection from its start. Select a scenario and press **Send CALL**.
+
+| Scenario        | Result                                                                                                         |
+| --------------- | -------------------------------------------------------------------------------------------------------------- |
+| **Success**     | The router returns `RESULT` for the demo call.                                                                 |
+| **Error**       | The router returns `ERROR` for the demo call.                                                                  |
+| **No response** | The page reports a timeout after two seconds. The connection stays open and the captured call remains pending. |
+
+The router speaks `wamp.2.json` and serves the demo on loopback. It sends synthetic responses to the demo page.
+
 ## Project layout
 
 ```text
@@ -31,17 +62,21 @@ src/capture/        WebSocket hook, page bridge, and background storage
 src/devtools/       DevTools panel, message filters, and JSON preview
 src/popup/          Toolbar popup and current-tab summary
 src/shared/         WAMP frame parsing and theme styles
-tests/              Node tests for capture, rendering logic, and popup behavior
+tools/              Local MCP companion and mock WAMP router
+tests/              Node tests for the extension and local tools
+e2e/                Chrome end-to-end tests
 docs/images/        Screenshots captured with local test traffic
 ```
 
 ## Run the tests
 
-Run `npm test` from the repository root with Node.js 22 or newer. The tests use Node’s built-in test runner and require no package installation.
+Run `npm test` from the repository root with Node.js 22 or newer. Install dependencies with `npm ci` first. The tests use Node’s built-in test runner and local loopback connections.
 
-Run `npm ci` and `npm run typecheck` to check the capture worker, WAMP frame parser, and DevTools capture transport against the shared TypeScript contracts. The browser continues to run JavaScript from the repository directly.
+Run `npm run typecheck` to check the capture worker, WAMP frame parser, and DevTools capture transport against the shared TypeScript contracts. The browser continues to run JavaScript from the repository directly.
 
 Run `npm run format` to apply Prettier and `npm run format:check` to check formatting.
+
+On macOS with Google Chrome installed, run `npm run test:e2e` to verify the demo and the Chrome-to-MCP flow in a temporary profile. Set `WAMP_INSPECTOR_E2E_CODEX=1` to exercise the tools through an installed Codex CLI. The suite pregrants Native Messaging in a disposable extension copy for unattended runs. Set `WAMP_INSPECTOR_E2E_PROMPT=1` to test the permission prompt interactively with the original manifest.
 
 ## Package a release
 
