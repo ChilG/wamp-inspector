@@ -10,5 +10,9 @@ if [[ "${GITHUB_REF_TYPE:-}" == tag && "${GITHUB_REF_NAME:-}" != "v$version" ]];
   exit 1
 fi
 
-archive=$(npm run --silent build)
-printf 'filename=%s\n' "${archive##*/}" >> "$GITHUB_OUTPUT"
+chrome_archive=$(npm run --silent build -- chrome)
+edge_archive=$(npm run --silent build -- edge)
+{
+  printf 'chrome_filename=%s\n' "${chrome_archive##*/}"
+  printf 'edge_filename=%s\n' "${edge_archive##*/}"
+} >> "$GITHUB_OUTPUT"

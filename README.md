@@ -68,13 +68,13 @@ In **Settings → Actions → General**, enable **Allow GitHub Actions to create
 
 ## Package a release
 
-Run `npm run build` to create `dist/wamp-inspector-<version>.zip` locally.
+Run `npm run build -- chrome` or `npm run build -- edge` to create `dist/wamp-inspector-<version>-chrome.zip` or `dist/wamp-inspector-<version>-edge.zip` locally. Running `npm run build` without a browser still creates `dist/wamp-inspector-<version>.zip` for Chrome.
 
-Run **Package WAMP Inspector** from the repository's **Actions** tab to download the extension ZIP as a workflow artifact. The workflow must be on the default branch before you can run it manually.
+Run **Package WAMP Inspector** from the repository's **Actions** tab to download both ZIPs as workflow artifacts. The workflow must be on the default branch before you can run it manually.
 
-When a version PR from `release/v<version>` merges into `main`, **Tag Version** creates the matching tag on the merge commit and starts **Package WAMP Inspector** for that tag. After checks pass, the workflow attaches `wamp-inspector-<version>.zip` to a draft on the **Releases** page. Review the draft and publish it when ready.
+When a version PR from `release/v<version>` merges into `main`, **Tag Version** creates the matching tag on the merge commit and starts **Package WAMP Inspector** for that tag. After checks pass, the workflow attaches both ZIPs to the same draft on the **Releases** page. Review the draft and publish it when ready.
 
-The ZIP contains `manifest.json` at its root, along with the runtime files and icons. The same ZIP format is used for Chrome Web Store submissions.
+Each ZIP includes `manifest.json` at its root, along with the runtime files and icons. Use the Chrome ZIP for the Chrome Web Store and the Edge ZIP for Microsoft Edge Add-ons. The Edge package uses Microsoft Edge branding in the manifest.
 
 ## Data and permissions
 

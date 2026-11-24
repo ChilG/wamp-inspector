@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${ARCHIVE_NAME:?ARCHIVE_NAME is required}"
+: "${CHROME_ARCHIVE_NAME:?CHROME_ARCHIVE_NAME is required}"
+: "${EDGE_ARCHIVE_NAME:?EDGE_ARCHIVE_NAME is required}"
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 : "${RELEASE_TAG:?RELEASE_TAG is required}"
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.."
 
-archive="dist/$ARCHIVE_NAME"
-unzip -tq "$archive"
+archives=("dist/$CHROME_ARCHIVE_NAME" "dist/$EDGE_ARCHIVE_NAME")
+for archive in "${archives[@]}"; do
+  unzip -tq "$archive"
+done
 
 if release=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,assets); then
   if ! jq -e '.isDraft' <<< "$release" > /dev/null; then
@@ -15,11 +18,19 @@ if release=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json i
     exit 1
   fi
 
-  if jq -e --arg name "$ARCHIVE_NAME" 'any(.assets[]; .name == $name and .state == "uploaded")' <<< "$release" > /dev/null; then
-    echo "$ARCHIVE_NAME is already attached to the draft"
-  else
-    gh release upload "$RELEASE_TAG" "$archive" --repo "$GITHUB_REPOSITORY"
+  missing_archives=()
+  for archive in "${archives[@]}"; do
+    name="${archive##*/}"
+    if jq -e --arg name "$name" 'any(.assets[]; .name == $name and .state == "uploaded")' <<< "$release" > /dev/null; then
+      echo "$name is already attached to the draft"
+    else
+      missing_archives+=("$archive")
+    fi
+  done
+
+  if (( ${#missing_archives[@]} > 0 )); then
+    gh release upload "$RELEASE_TAG" "${missing_archives[@]}" --repo "$GITHUB_REPOSITORY" --clobber
   fi
 else
-  gh release create "$RELEASE_TAG" "$archive" --repo "$GITHUB_REPOSITORY" --draft --verify-tag --generate-notes
+  gh release create "$RELEASE_TAG" "${archives[@]}" --repo "$GITHUB_REPOSITORY" --draft --verify-tag --generate-notes
 fi

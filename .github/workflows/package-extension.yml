@@ -13,7 +13,8 @@ jobs:
   package:
     runs-on: ubuntu-latest
     outputs:
-      filename: ${{ steps.zip.outputs.filename }}
+      chrome_filename: ${{ steps.zip.outputs.chrome_filename }}
+      edge_filename: ${{ steps.zip.outputs.edge_filename }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -28,15 +29,27 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
-      - name: Create extension ZIP
+      - name: Create Chrome and Edge ZIPs
         id: zip
         shell: bash
         run: bash .github/scripts/package-artifact.sh
 
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - name: Upload Chrome ZIP
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          path: dist/${{ steps.zip.outputs.filename }}
+          name: ${{ steps.zip.outputs.chrome_filename }}
+          path: dist/${{ steps.zip.outputs.chrome_filename }}
           archive: false
+          overwrite: true
+          if-no-files-found: error
+
+      - name: Upload Edge ZIP
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.zip.outputs.edge_filename }}
+          path: dist/${{ steps.zip.outputs.edge_filename }}
+          archive: false
+          overwrite: true
           if-no-files-found: error
 
   draft-release:
@@ -53,16 +66,25 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - name: Download Chrome ZIP
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: ${{ needs.package.outputs.filename }}
+          name: ${{ needs.package.outputs.chrome_filename }}
           path: dist
           skip-decompress: true
 
-      - name: Attach ZIP to draft release
+      - name: Download Edge ZIP
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.package.outputs.edge_filename }}
+          path: dist
+          skip-decompress: true
+
+      - name: Attach both ZIPs to draft release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
-          ARCHIVE_NAME: ${{ needs.package.outputs.filename }}
+          CHROME_ARCHIVE_NAME: ${{ needs.package.outputs.chrome_filename }}
+          EDGE_ARCHIVE_NAME: ${{ needs.package.outputs.edge_filename }}
         run: bash .github/scripts/attach-draft-release.sh
