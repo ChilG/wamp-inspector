@@ -4,6 +4,7 @@ export class PayloadPanelResize {
     this.capture = panel.closest(".capture");
     this.toolbar = this.capture.querySelector(".capture-header");
     this.search = panel.querySelector(".payload-search");
+    this.tabs = panel.querySelector(".preview-tabs-bar");
     this.handle = panel.querySelector("#payload-resize");
     this.expandButton = panel.querySelector("#expand-inspector");
     this.requestedHeight = null;
@@ -43,7 +44,7 @@ export class PayloadPanelResize {
     const editing = this.panel.hasAttribute("data-editing");
     const min = Math.min(
       max,
-      (editing ? 164 : 84) + this.search.offsetHeight,
+      (editing ? 164 : 84) + this.search.offsetHeight + this.tabs.offsetHeight,
       Math.floor(available * (editing ? 0.62 : 0.4)),
     );
     return { min, max };

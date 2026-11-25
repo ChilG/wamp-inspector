@@ -63,7 +63,7 @@ export function syncChildren(parent, children) {
 }
 
 export class MessageSearch {
-  constructor(onFilter) {
+  constructor() {
     this.input = document.querySelector("#message-search");
     this.form = document.querySelector("#message-filters");
     this.minimum = document.querySelector("#minimum-latency");
@@ -77,7 +77,6 @@ export class MessageSearch {
     this.empty = document.querySelector("#no-messages");
     this.stream = document.querySelector(".stream");
     this.typeChoices = document.querySelector("#filter-types");
-    this.onFilter = onFilter;
     this.rows = [];
     this.indexByItem = new WeakMap();
     this.emptyMessage = "No messages in this capture.";
@@ -147,6 +146,11 @@ export class MessageSearch {
     this.showButton.setAttribute("aria-expanded", String(open));
   }
 
+  focus() {
+    const control = this.input.checkVisibility() ? this.input : this.showButton;
+    control.focus({ preventScroll: true });
+  }
+
   positionPopover() {
     const { bottom, left } = this.filterButton.getBoundingClientRect();
     this.form.style.setProperty("--filter-top", `${bottom + 5}px`);
@@ -213,7 +217,6 @@ export class MessageSearch {
       : this.emptyMessage;
     if (this.empty.textContent !== emptyMessage)
       this.empty.textContent = emptyMessage;
-    this.onFilter();
     if (resetScroll) this.stream.scrollTop = 0;
   }
 }
