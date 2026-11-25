@@ -232,7 +232,7 @@ h1 {
 }
 
 .capture {
-  --inspector-default-height: min(158px, 42%);
+  --inspector-default-height: min(188px, 48%);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   grid-template-columns: minmax(0, 1fr);
@@ -240,7 +240,7 @@ h1 {
   min-height: 0;
 }
 .capture:has(.inspector[data-editing]) {
-  --inspector-default-height: min(330px, 62%);
+  --inspector-default-height: min(360px, 68%);
 }
 .capture:has(.inspector:not([hidden])) {
   grid-template-rows: auto minmax(0, 1fr) var(
@@ -726,8 +726,14 @@ summary::-webkit-details-marker {
   background: var(--sidebar);
   border-top: 1px solid var(--selection-line);
 }
-.inspector:has(.payload-search:not([hidden])) {
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+.inspector-content {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+.inspector-content:has(.payload-search:not([hidden])) {
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 .inspector-resize {
   position: absolute;
@@ -774,13 +780,61 @@ summary::-webkit-details-marker {
   border-bottom: 1px solid var(--line);
 }
 .inspector-title {
+  margin-inline-end: auto;
   font-size: 12px;
   font-weight: 650;
   white-space: nowrap;
 }
-.inspector-label {
-  flex: 1;
+.preview-tabs-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding-inline-end: 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--toolbar);
+}
+.preview-tabs {
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  padding-inline: 8px;
+  scrollbar-width: thin;
+}
+.preview-tab-item {
+  display: flex;
+  flex: none;
+  max-width: calc(100% - 16px);
+  border-bottom: 2px solid transparent;
+}
+.preview-tab-item:has([aria-selected="true"]) {
+  border-bottom-color: var(--blue);
+  background: var(--selection);
+}
+.preview-tab,
+.preview-tab-close {
+  min-height: 27px;
+  border: 0;
   color: var(--muted);
+}
+.preview-tab {
+  max-width: 220px;
+  padding-inline: 8px;
+  font: 11px/1.4 var(--mono);
+}
+.preview-tab[aria-selected="true"],
+.preview-tab-item:hover .preview-tab {
+  color: var(--text);
+}
+.preview-tab-close {
+  flex: none;
+  padding-inline: 7px;
+  font-size: 13px;
+}
+.preview-tab-close:hover {
+  background: var(--control);
+  color: var(--text);
 }
 #mock-response-open {
   flex-shrink: 0;
@@ -1003,14 +1057,57 @@ button.json-key:hover {
     border-bottom: 1px solid var(--line);
     background: var(--sidebar);
   }
-  .socket-select select {
-    width: 100%;
+  .socket-select-label {
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .socket-picker-control {
+    position: relative;
+    display: grid;
     min-width: 0;
-    height: 26px;
-    text-overflow: ellipsis;
+    gap: 2px;
+    padding: 5px 27px 5px 8px;
     border: 1px solid var(--control-border);
     border-radius: 4px;
     background: var(--control);
+  }
+  .socket-picker-control > code {
+    font-size: 12px;
+    font-weight: 650;
+  }
+  .socket-picker-control .conn-meta time {
+    margin-left: 0;
+  }
+  .socket-picker-control::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    inset-inline-end: 11px;
+    width: 6px;
+    height: 6px;
+    border-right: 1px solid var(--muted);
+    border-bottom: 1px solid var(--muted);
+    transform: translateY(-65%) rotate(45deg);
+    pointer-events: none;
+  }
+  .socket-picker-control select {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+  }
+  .socket-picker-control:focus-within {
+    outline: 2px solid var(--blue);
+    outline-offset: -1px;
+  }
+  .socket-picker-control:has(select:disabled) {
+    color: var(--muted);
+    background: var(--sidebar);
+  }
+  .socket-picker-control:has(select:disabled)::after {
+    display: none;
   }
   .capture-bar {
     min-height: 34px;
@@ -1018,6 +1115,12 @@ button.json-key:hover {
 }
 
 @media (max-width: 520px) {
+  .socket-select {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .socket-select-label {
+    display: none;
+  }
   .toolbar {
     gap: 8px;
   }

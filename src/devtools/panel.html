@@ -43,13 +43,32 @@
           </details>
         </aside>
 
-        <label class="socket-select"
-          >Connection
-          <select id="socket-picker">
-            <optgroup id="pick-open" label="Open connections"></optgroup>
-            <optgroup id="pick-closed" label="Closed connections"></optgroup>
-          </select>
-        </label>
+        <div class="socket-select">
+          <label class="socket-select-label" for="socket-picker"
+            >Connection</label
+          >
+          <div class="socket-picker-control">
+            <code
+              id="socket-picker-endpoint"
+              class="clip"
+              aria-hidden="true"
+            ></code>
+            <div
+              id="socket-picker-meta"
+              class="conn-meta"
+              aria-hidden="true"
+              hidden
+            >
+              <span id="socket-picker-status" class="status"></span>
+              <span class="frame muted"></span>
+              <time></time>
+            </div>
+            <select id="socket-picker" aria-label="Connection">
+              <optgroup id="pick-open" label="Open connections"></optgroup>
+              <optgroup id="pick-closed" label="Closed connections"></optgroup>
+            </select>
+          </div>
+        </div>
 
         <section class="capture" aria-label="Selected connection">
           <div class="capture-header">
@@ -198,7 +217,6 @@
             ></div>
             <header class="inspector-head">
               <h2 id="inspector-title" class="inspector-title">JSON preview</h2>
-              <code id="inspected-message" class="inspector-label clip"></code>
               <button
                 id="mock-response-open"
                 class="control"
@@ -231,92 +249,122 @@
                 id="close-inspector"
                 class="control"
                 type="button"
-                aria-label="Close payload"
-                title="Close payload"
+                aria-label="Hide JSON preview"
+                title="Hide JSON preview"
               >
                 ×
               </button>
             </header>
-            <div
-              id="payload-search"
-              class="payload-search"
-              role="search"
-              aria-label="Search selected payload"
-              hidden
-            >
-              <input
-                id="payload-query"
-                class="search-input"
-                type="search"
-                placeholder="Find key or value"
-                aria-label="Find a payload key or value"
-                autocomplete="off"
-                spellcheck="false"
-              />
-              <output
-                id="payload-match-count"
-                class="match-count"
-                for="payload-query"
-                aria-label="Payload matches"
-              ></output>
+            <div id="preview-tabs-bar" class="preview-tabs-bar">
+              <div
+                id="preview-tabs"
+                class="preview-tabs"
+                role="tablist"
+                aria-label="Opened messages"
+              ></div>
               <button
-                id="previous-payload-match"
+                id="close-all-preview-tabs"
                 class="control"
                 type="button"
-                aria-label="Previous match"
-                title="Previous match (Shift+Enter)"
-                disabled
+                title="Close all tabs on this connection"
               >
-                ↑
-              </button>
-              <button
-                id="next-payload-match"
-                class="control"
-                type="button"
-                aria-label="Next match"
-                title="Next match (Enter)"
-                disabled
-              >
-                ↓
+                Close all tabs
               </button>
             </div>
-            <p id="mock-response-status" role="status"></p>
-            <div
-              id="payload-contents"
-              class="payloads"
-              role="region"
-              aria-label="Payload contents"
-              tabindex="0"
-            ></div>
-            <form
-              id="mock-response-form"
-              class="mock-response-editor"
-              aria-label="Edit mock response"
-              hidden
-            >
-              <label id="mock-response-label" for="mock-response-body">
-                Mock RESULT <code>[args, kwargs]</code>
-              </label>
-              <textarea
-                id="mock-response-body"
-                aria-describedby="mock-response-error"
-                spellcheck="false"
-                autocapitalize="off"
-                wrap="off"
-              ></textarea>
-              <p id="mock-response-error" role="alert"></p>
-              <div class="mock-response-actions">
-                <button id="mock-response-cancel" class="control" type="button">
-                  Cancel
+            <div id="preview-body" class="inspector-content" role="tabpanel">
+              <div
+                id="payload-search"
+                class="payload-search"
+                role="search"
+                aria-label="Search selected payload"
+                hidden
+              >
+                <input
+                  id="payload-query"
+                  class="search-input"
+                  type="search"
+                  placeholder="Find key or value"
+                  aria-label="Find a payload key or value"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+                <output
+                  id="payload-match-count"
+                  class="match-count"
+                  for="payload-query"
+                  aria-label="Payload matches"
+                ></output>
+                <button
+                  id="previous-payload-match"
+                  class="control"
+                  type="button"
+                  aria-label="Previous match"
+                  title="Previous match (Shift+Enter)"
+                  disabled
+                >
+                  ↑
                 </button>
-                <button id="mock-response-apply" class="control" type="submit">
-                  Apply once
-                </button>
-                <button id="mock-response-enable" class="control" type="submit">
-                  Enable mock
+                <button
+                  id="next-payload-match"
+                  class="control"
+                  type="button"
+                  aria-label="Next match"
+                  title="Next match (Enter)"
+                  disabled
+                >
+                  ↓
                 </button>
               </div>
-            </form>
+              <p id="mock-response-status" role="status"></p>
+              <div
+                id="payload-contents"
+                class="payloads"
+                role="region"
+                aria-label="Payload contents"
+                tabindex="0"
+              ></div>
+              <form
+                id="mock-response-form"
+                class="mock-response-editor"
+                aria-label="Edit mock response"
+                hidden
+              >
+                <label id="mock-response-label" for="mock-response-body">
+                  Mock RESULT <code>[args, kwargs]</code>
+                </label>
+                <textarea
+                  id="mock-response-body"
+                  aria-describedby="mock-response-error"
+                  spellcheck="false"
+                  autocapitalize="off"
+                  wrap="off"
+                ></textarea>
+                <p id="mock-response-error" role="alert"></p>
+                <div class="mock-response-actions">
+                  <button
+                    id="mock-response-cancel"
+                    class="control"
+                    type="button"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    id="mock-response-apply"
+                    class="control"
+                    type="submit"
+                  >
+                    Apply once
+                  </button>
+                  <button
+                    id="mock-response-enable"
+                    class="control"
+                    type="submit"
+                  >
+                    Enable mock
+                  </button>
+                </div>
+              </form>
+            </div>
           </section>
         </section>
       </div>

@@ -49,7 +49,9 @@ function appPage(startupCallId, startupTopic) {
   const reply = document.querySelector('#reply');
   const form = document.querySelector('form');
   const send = form.querySelector('button');
-  const socket = new WebSocket('ws://' + location.host + '/wire', 'wamp.2.json');
+  const connectionTag = new URLSearchParams(location.search).get('connection');
+  const query = connectionTag ? '?connection=' + encodeURIComponent(connectionTag) : '';
+  const socket = new WebSocket('ws://' + location.host + '/wire' + query, 'wamp.2.json');
   const startupCallId = ${JSON.stringify(startupCallId)};
   const startupTopic = ${JSON.stringify(startupTopic)};
   let nextId = 0;

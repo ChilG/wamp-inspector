@@ -8,27 +8,44 @@ import { subscribeToCapture } from "./panel-capture-stream.js";
 import { bindMockList } from "./panel-mock-list.js";
 import { bindMockResponse } from "./panel-mock-response.js";
 import { PayloadColumns } from "./panel-payload-columns.js";
+import { bindConnectionPicker } from "./panel-connection-picker.js";
+import {
+  EMPTY_PREVIEW,
+  PreviewTabStrip,
+  closePreviewTab,
+  hidePreview,
+  openPreviewTab,
+  retainPreviewTabs,
+} from "./panel-preview-tabs.js";
 import { sendCaptureRequest } from "../shared/capture-client.js";
 
 const $ = (selector) => document.querySelector(selector);
 const clone = (name) =>
   $(`#${name}-template`).content.firstElementChild.cloneNode(true);
 const tabId = chrome.devtools.inspectedWindow.tabId;
-const picker = $("#socket-picker");
-const pickOpen = $("#pick-open");
-const pickClosed = $("#pick-closed");
+const connectionPicker = bindConnectionPicker(
+  $(".socket-select"),
+  chooseSocket,
+);
 const openConnections = $("#connections");
 const closedConnections = $("#closed-connections");
 const closedHistory = $("#closed-history");
 const clearButton = $("#clear");
 const socketDetails = $("#socket-details");
 const metadata = $("#metadata");
-const noConnectionOption = new Option("No connections", "");
 const stream = $(".stream");
 const columnResize = new MessageColumnResize(stream);
 bindTopicColumn(stream, $("#show-topic-column"), columnResize);
 const inspector = $("#message-inspector");
 const payloads = $("#payload-contents");
+const previewTabs = new PreviewTabStrip(
+  $("#preview-tabs-bar"),
+  $("#preview-body"),
+  {
+    activate: showMessageTab,
+    close: closeMessageTab,
+  },
+);
 const panelResize = new PayloadPanelResize(inspector);
 const payloadSearch = new PayloadSearch(inspector, payloads, () =>
   panelResize.update(),
@@ -39,6 +56,7 @@ const renderMocks = bindMockList({
   onChange: () => queueCaptureRefresh({ connections: true }),
 });
 const sockets = new Map();
+const previewStates = new Map();
 const setMockCall = bindMockResponse({
   opener: $("#mock-response-open"),
   status: $("#mock-response-status"),
@@ -96,9 +114,7 @@ let clearing = false;
 let visibleMetadata = "";
 let pageUrlKnown = false;
 
-const messageSearch = new MessageSearch(() => {
-  if (rowViews.get(selectedMessageKey)?.item.hidden) closeInspector();
-});
+const messageSearch = new MessageSearch();
 const payloadColumns = new PayloadColumns(stream, columnResize, () => {
   for (const { item, message } of rowViews.values())
     payloadColumns.renderCells(item, message);
@@ -155,14 +171,16 @@ function updateSocketView(view, socket) {
   const frame = `Frame ${socket.frameId ?? 0}`;
   const time = formatTime(socket.createdAt, connectionClock);
   const status = view.item.querySelector(".status");
+  const stateCode = socket.state ?? "";
+  view.presentation = { address, endpoint, frame, state, stateCode, time };
 
   text(view.item.querySelector("code"), endpoint);
   text(status, state);
-  status.dataset.state = socket.state ?? "";
+  status.dataset.state = stateCode;
   text(view.item.querySelector(".frame"), frame);
   text(view.item.querySelector("time"), time);
   view.button.title = address;
-  text(view.option, `${state} · ${frame} · ${time} · ${endpoint}`);
+  text(view.option, `${endpoint} · ${frame} · ${state} · ${time}`);
 }
 
 function compareSockets(first, second) {
@@ -187,9 +205,9 @@ function updateSocketSelection() {
     if (button.getAttribute("aria-pressed") !== pressed)
       button.setAttribute("aria-pressed", pressed);
   }
-  const selected = selectedSocketKey ?? "";
-  if (picker.value !== selected) picker.value = selected;
-  renderSocketMetadata(sockets.get(selectedSocketKey)?.socket);
+  const selected = sockets.get(selectedSocketKey);
+  connectionPicker.setSelected(selected);
+  renderSocketMetadata(selected?.socket);
   updateMockResponseTarget();
 }
 
@@ -211,7 +229,9 @@ function renderSockets(socketList) {
     (socket.state === "CLOSED" ? closed : open).push(view);
   }
   for (const key of sockets.keys()) {
-    if (!retained.has(key)) sockets.delete(key);
+    if (retained.has(key)) continue;
+    sockets.delete(key);
+    previewStates.delete(key);
   }
 
   syncChildren(
@@ -222,25 +242,14 @@ function renderSockets(socketList) {
     closedConnections,
     closed.map(({ item }) => item),
   );
-  syncChildren(
-    pickOpen,
+  connectionPicker.setOptions(
     open.map(({ option }) => option),
-  );
-  syncChildren(
-    pickClosed,
     closed.map(({ option }) => option),
   );
   text($("#count"), open.length);
   text($("#closed-count"), closed.length);
   $("#no-connections").hidden = open.length > 0;
-  closedHistory.hidden = pickClosed.hidden = closed.length === 0;
-  pickOpen.hidden = open.length === 0;
-  picker.disabled = sorted.length === 0;
-  if (picker.disabled) {
-    if (!noConnectionOption.isConnected) picker.prepend(noConnectionOption);
-  } else {
-    noConnectionOption.remove();
-  }
+  closedHistory.hidden = closed.length === 0;
 
   if (!sockets.has(selectedSocketKey)) {
     const first = open[0] ?? closed[0];
@@ -279,16 +288,16 @@ function renderSocketMetadata(socket) {
   );
 }
 
-function closeInspector(restoreFocus = false) {
-  const button = rowViews.get(selectedMessageKey)?.button;
-  button?.setAttribute("aria-expanded", "false");
+function resetInspector() {
+  rowViews
+    .get(selectedMessageKey)
+    ?.button.setAttribute("aria-expanded", "false");
   selectedMessageKey = null;
   updateMockResponseTarget();
   inspector.hidden = true;
   payloadSearch.close();
   payloadSearch.setPayloads();
   payloads.replaceChildren();
-  if (restoreFocus) button?.focus({ preventScroll: true });
 }
 
 function createPayload(label, meta, payload, source = "request") {
@@ -356,23 +365,16 @@ function renderSavedMock(payload, reveal) {
   if (reveal) payloads.scrollTop = 0;
 }
 
-function toggleInspector(key) {
-  if (selectedMessageKey === key) {
-    closeInspector();
-    return;
-  }
+function renderInspector(key) {
+  if (selectedMessageKey === key) return;
+  resetInspector();
 
   const view = rowViews.get(key);
   if (!view) return;
   const { button, message } = view;
   const exchange = message.direction === "exchange";
-  closeInspector();
   selectedMessageKey = key;
   button.setAttribute("aria-expanded", "true");
-  text(
-    $("#inspected-message"),
-    message.id == null ? message.type : `${message.type} · #${message.id}`,
-  );
   const timestamp = formatTime(message.time);
   const meta = exchange
     ? timestamp
@@ -387,10 +389,76 @@ function toggleInspector(key) {
   inspector.hidden = false;
   panelResize.update();
   payloads.scrollTop = 0;
+}
+
+function describePreviewTab(key) {
+  const { message } = rowViews.get(key);
+  const time = formatTime(message.time);
+  return {
+    label:
+      message.id == null
+        ? `${message.type} · ${time}`
+        : `${message.type} #${message.id}`,
+    detail: [message.summary, message.topic, time].filter(Boolean).join(" · "),
+  };
+}
+
+function currentPreview() {
+  return previewStates.get(selectedSocketKey) ?? EMPTY_PREVIEW;
+}
+
+function renderPreview(preview) {
+  const previousKey = selectedMessageKey;
+  const key = preview.visible ? preview.activeKey : null;
+  const lostFocus = previewTabs.render(
+    preview.visible ? preview : EMPTY_PREVIEW,
+    describePreviewTab,
+  );
+  renderInspector(key);
+  if (key !== previousKey && key !== null) previewTabs.reveal(key);
+  if (lostFocus) {
+    if (key === null) focusMessageRow(previousKey);
+    else previewTabs.focus(key);
+  }
+}
+
+function setPreview(preview) {
+  if (preview.keys.length) previewStates.set(selectedSocketKey, preview);
+  else previewStates.delete(selectedSocketKey);
+  renderPreview(preview);
+}
+
+function showMessageTab(key) {
+  if (!rowViews.has(key)) return;
+  setPreview(openPreviewTab(currentPreview(), key));
+}
+
+function openRowPreview(key, button) {
+  showMessageTab(key);
   const overflow =
     button.getBoundingClientRect().bottom -
     stream.getBoundingClientRect().bottom;
   if (overflow > 0) stream.scrollTop += overflow;
+}
+
+function focusMessageRow(key) {
+  const button = rowViews.get(key)?.button;
+  if (button?.checkVisibility()) button.focus({ preventScroll: true });
+  else messageSearch.focus();
+}
+
+function closeMessageTab(key = null) {
+  const current = currentPreview();
+  const preview = key === null ? EMPTY_PREVIEW : closePreviewTab(current, key);
+  setPreview(preview);
+  if (preview.visible) previewTabs.focus(preview.activeKey);
+  else focusMessageRow(key ?? current.activeKey);
+}
+
+function hideInspector() {
+  const preview = currentPreview();
+  setPreview(hidePreview(preview));
+  focusMessageRow(preview.activeKey);
 }
 
 function renderMessageRow(message, previous) {
@@ -410,7 +478,7 @@ function renderMessageRow(message, previous) {
   const item = previous?.item ?? clone("message");
   const button = item.querySelector("button");
   if (!previous)
-    button.addEventListener("click", () => toggleInspector(message.key));
+    button.addEventListener("click", () => openRowPreview(message.key, button));
 
   const [symbol, direction] = directions[message.direction];
   const icon = item.querySelector(".direction");
@@ -469,7 +537,7 @@ function renderMessageRow(message, previous) {
 }
 
 function clearMessageView(emptyMessage) {
-  closeInspector();
+  renderPreview(EMPTY_PREVIEW);
   rowViews = new Map();
   messageSnapshot = null;
   text($("#message-count"), 0);
@@ -521,20 +589,25 @@ function renderMessages(socket) {
       ];
     }),
   );
-  const before = rowViews.get(selectedMessageKey)?.message;
-  const after = next.get(selectedMessageKey)?.message;
-  if (before && !after) closeInspector();
-  if (after && before?.replyKey !== after.replyKey) {
-    payloads.lastElementChild?.replaceWith(createReply(after));
-    updatePayloadSearch(after);
-  }
+  const previousKey = selectedMessageKey;
+  const before = rowViews.get(previousKey)?.message;
   rowViews = next;
-  updateMockResponseTarget();
   messageSearch.setRows(
     [...rowViews.values()],
     "No WAMP messages on this connection.",
     { preserveScroll },
   );
+  setPreview(retainPreviewTabs(currentPreview(), rowViews));
+  if (selectedMessageKey === previousKey && previousKey !== null) {
+    const after = rowViews.get(previousKey)?.message;
+    if (after && before?.replyKey !== after.replyKey) {
+      payloads
+        .querySelector('[data-payload="response"]')
+        ?.replaceWith(createReply(after));
+      updatePayloadSearch(after);
+    }
+    updateMockResponseTarget();
+  }
 }
 
 function setSelectedSocket(key) {
@@ -545,6 +618,9 @@ function setSelectedSocket(key) {
   clearMessageView(
     key === null ? "No WAMP messages captured yet." : "Loading messages…",
   );
+  const preview = currentPreview();
+  if (!preview.visible && preview.activeKey !== null)
+    previewStates.set(key, openPreviewTab(preview, preview.activeKey));
   return true;
 }
 
@@ -664,8 +740,7 @@ function resetCapture() {
   setCaptureStatus("");
 }
 
-picker.addEventListener("change", () => chooseSocket(picker.value));
-$("#close-inspector").addEventListener("click", () => closeInspector(true));
+$("#close-inspector").addEventListener("click", hideInspector);
 clearButton.addEventListener("click", async () => {
   if (clearing) return;
   clearing = true;
@@ -679,6 +754,7 @@ clearButton.addEventListener("click", async () => {
     });
     if (!response?.ok) throw new Error("Message clear was not confirmed");
     if (revision === captureRevision) {
+      previewStates.clear();
       clearMessageView(
         selectedSocketKey
           ? "No WAMP messages on this connection."
