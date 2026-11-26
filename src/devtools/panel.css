@@ -803,10 +803,23 @@ summary::-webkit-details-marker {
   scrollbar-width: thin;
 }
 .preview-tab-item {
+  position: relative;
   display: flex;
   flex: none;
   max-width: calc(100% - 16px);
   border-bottom: 2px solid transparent;
+}
+.preview-tab-item[data-drop-before]::before,
+.preview-tab-item[data-drop-after]::after {
+  position: absolute;
+  z-index: 1;
+  inset-block: 2px;
+  left: var(--preview-drop-offset);
+  width: 2px;
+  border-radius: 1px;
+  background: var(--blue);
+  content: "";
+  pointer-events: none;
 }
 .preview-tab-item:has([aria-selected="true"]) {
   border-bottom-color: var(--blue);
@@ -822,6 +835,9 @@ summary::-webkit-details-marker {
   max-width: 220px;
   padding-inline: 8px;
   font: 11px/1.4 var(--mono);
+}
+.preview-tab[draggable="true"] {
+  cursor: grab;
 }
 .preview-tab[aria-selected="true"],
 .preview-tab-item:hover .preview-tab {

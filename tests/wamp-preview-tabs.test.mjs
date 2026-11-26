@@ -4,6 +4,7 @@ import {
   EMPTY_PREVIEW,
   closePreviewTab,
   hidePreview,
+  movePreviewTab,
   openPreviewTab,
   retainPreviewTabs,
 } from "../src/devtools/panel-preview-tabs.js";
@@ -30,6 +31,19 @@ test("hides the inspector while keeping its tabs available to reopen", () => {
   assert.deepEqual(openPreviewTab(hidden, "call:1"), first);
   assert.equal(hidePreview(hidden), hidden);
   assert.equal(closePreviewTab(first, "missing"), first);
+});
+
+test("moves a tab in either direction while preserving the active payload", () => {
+  let preview = EMPTY_PREVIEW;
+  for (const key of ["a", "b", "c"]) preview = openPreviewTab(preview, key);
+  const moved = movePreviewTab(preview, "a", 2);
+
+  assert.deepEqual(preview.keys, ["a", "b", "c"]);
+  assert.deepEqual(moved, { ...preview, keys: ["b", "c", "a"] });
+  assert.deepEqual(movePreviewTab(moved, "a", 0), preview);
+  assert.equal(movePreviewTab(moved, "a", 2), moved);
+  assert.equal(movePreviewTab(moved, "missing", 0), moved);
+  assert.equal(movePreviewTab(moved, "a", 3), moved);
 });
 
 test("activates the next tab, then the previous tab, when closing the active tab", () => {

@@ -15,6 +15,21 @@ export function openPreviewTab(preview, key) {
   };
 }
 
+export function movePreviewTab(preview, key, index) {
+  const current = preview.keys.indexOf(key);
+  if (
+    current < 0 ||
+    current === index ||
+    !Number.isInteger(index) ||
+    index < 0 ||
+    index >= preview.keys.length
+  )
+    return preview;
+
+  const keys = preview.keys.toSpliced(current, 1).toSpliced(index, 0, key);
+  return { ...preview, keys };
+}
+
 export function hidePreview(preview) {
   return preview.visible ? { ...preview, visible: false } : preview;
 }
@@ -39,15 +54,32 @@ export function retainPreviewTabs(preview, rows) {
 }
 
 export class PreviewTabStrip {
-  constructor(bar, content, { activate, close }) {
+  constructor(bar, content, { activate, close, move }) {
     this.list = bar.querySelector('[role="tablist"]');
     this.content = content;
     this.activate = activate;
     this.close = close;
+    this.move = move;
     this.preview = EMPTY_PREVIEW;
     this.entries = new Map();
     this.nextId = 0;
+    this.draggedKey = null;
+    this.dropMarker = null;
+    this.hoverX = null;
+    this.scrollFrame = null;
     this.list.addEventListener("keydown", (event) => this.onKeyDown(event));
+    const updateDrag = (event) => this.dragOver(event);
+    this.list.addEventListener("dragenter", updateDrag);
+    this.list.addEventListener("dragover", updateDrag);
+    this.list.addEventListener("dragleave", (event) => {
+      if (!this.list.contains(event.relatedTarget)) this.clearHover();
+    });
+    this.list.addEventListener("drop", (event) => this.drop(event));
+    this.list.addEventListener("dragend", () => {
+      if (this.draggedKey === null) return;
+      this.endDrag();
+      this.focus(this.preview.activeKey);
+    });
     bar
       .querySelector("#close-all-preview-tabs")
       .addEventListener("click", () => close());
@@ -66,8 +98,21 @@ export class PreviewTabStrip {
     tab.title = detail;
     tab.setAttribute("role", "tab");
     tab.setAttribute("aria-controls", this.content.id);
-    tab.setAttribute("aria-keyshortcuts", "Delete");
+    tab.setAttribute(
+      "aria-keyshortcuts",
+      "Delete Alt+Shift+ArrowLeft Alt+Shift+ArrowRight",
+    );
     tab.addEventListener("click", () => this.activate(key));
+    tab.addEventListener("dragstart", (event) => {
+      if (!tab.draggable || !event.dataTransfer) {
+        event.preventDefault();
+        return;
+      }
+      this.endDrag();
+      this.draggedKey = key;
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("application/x-wamp-preview-tab", "tab");
+    });
 
     const close = document.createElement("button");
     close.className = "preview-tab-close";
@@ -82,6 +127,7 @@ export class PreviewTabStrip {
 
   render(preview, describe) {
     if (this.preview === preview) return false;
+    this.endDrag();
     const hadFocus = this.list.contains(document.activeElement);
     this.preview = preview;
     const entries = new Map();
@@ -90,6 +136,7 @@ export class PreviewTabStrip {
         this.entries.get(key) ?? this.createEntry(key, describe(key));
       const active = key === preview.activeKey;
       entry.tab.setAttribute("aria-selected", String(active));
+      entry.tab.draggable = preview.keys.length > 1;
       entry.tab.tabIndex = active ? 0 : -1;
       entry.close.tabIndex = active ? 0 : -1;
       entries.set(key, entry);
@@ -120,18 +167,117 @@ export class PreviewTabStrip {
     this.entries.get(key)?.tab.focus({ preventScroll: true });
   }
 
+  dropTarget(x) {
+    const from = this.preview.keys.indexOf(this.draggedKey);
+    const entries = [...this.entries.values()];
+    const next = entries.findIndex(({ item }) => {
+      const { left, width } = item.getBoundingClientRect();
+      return x < left + width / 2;
+    });
+    const gap = next === -1 ? entries.length : next;
+    const index = gap > from ? gap - 1 : gap;
+    if (index === from) return null;
+    return {
+      item: (entries[gap] ?? entries.at(-1)).item,
+      attribute: next === -1 ? "data-drop-after" : "data-drop-before",
+      index,
+    };
+  }
+
+  setMarker(marker) {
+    const previous = this.dropMarker;
+    if (
+      previous?.item !== marker?.item ||
+      previous?.attribute !== marker?.attribute
+    ) {
+      if (previous) {
+        previous.item.removeAttribute(previous.attribute);
+        previous.item.style.removeProperty("--preview-drop-offset");
+      }
+      if (marker) marker.item.setAttribute(marker.attribute, "");
+    }
+    this.dropMarker = marker;
+    if (!marker) return;
+
+    const strip = this.list.getBoundingClientRect();
+    const item = marker.item.getBoundingClientRect();
+    const gap =
+      marker.attribute === "data-drop-before" ? item.left : item.right;
+    const left = Math.min(strip.right - 3, Math.max(strip.left + 1, gap - 1));
+    marker.item.style.setProperty(
+      "--preview-drop-offset",
+      `${left - item.left}px`,
+    );
+  }
+
+  clearHover() {
+    if (this.scrollFrame !== null) cancelAnimationFrame(this.scrollFrame);
+    this.scrollFrame = null;
+    this.hoverX = null;
+    this.setMarker(null);
+  }
+
+  endDrag() {
+    this.clearHover();
+    this.draggedKey = null;
+  }
+
+  dragOver(event) {
+    if (this.draggedKey === null || !event.dataTransfer) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    this.hoverX = event.clientX;
+    this.setMarker(this.dropTarget(this.hoverX));
+    if (this.scrollFrame === null)
+      this.scrollFrame = requestAnimationFrame(() => this.scrollAtEdge());
+  }
+
+  scrollAtEdge() {
+    this.scrollFrame = null;
+    const x = this.hoverX;
+    if (x === null) return;
+    const { left, right, width } = this.list.getBoundingClientRect();
+    const edge = Math.min(width / 4, 28);
+    const previous = this.list.scrollLeft;
+    if (x < left + edge) this.list.scrollLeft -= 12;
+    else if (x > right - edge) this.list.scrollLeft += 12;
+    if (this.list.scrollLeft === previous) return;
+    this.setMarker(this.dropTarget(x));
+    this.scrollFrame = requestAnimationFrame(() => this.scrollAtEdge());
+  }
+
+  drop(event) {
+    const key = this.draggedKey;
+    if (key === null) return;
+    event.preventDefault();
+    const target = this.dropTarget(event.clientX);
+    this.endDrag();
+    if (target) this.move(key, target.index);
+    this.focus(this.preview.activeKey);
+  }
+
   onKeyDown(event) {
     if (
       event.isComposing ||
-      event.altKey ||
       event.ctrlKey ||
       event.metaKey ||
-      event.shiftKey ||
       !event.target.matches(".preview-tab")
     )
       return;
     const { keys, activeKey } = this.preview;
     const current = keys.indexOf(activeKey);
+    if (
+      event.altKey &&
+      event.shiftKey &&
+      ["ArrowLeft", "ArrowRight"].includes(event.key)
+    ) {
+      event.preventDefault();
+      this.move(activeKey, current + (event.key === "ArrowLeft" ? -1 : 1));
+      this.reveal(activeKey);
+      this.focus(activeKey);
+      return;
+    }
+    if (event.altKey || event.shiftKey) return;
     if (event.key === "Delete") {
       event.preventDefault();
       this.close(activeKey);
