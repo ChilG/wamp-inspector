@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
+import { StoredReloadMocks } from "../src/capture/reload-mock-storage.js";
 
 const runtimeId = "inspector-test";
 const extensionUrl = `chrome-extension://${runtimeId}/`;
@@ -29,12 +30,13 @@ const oversizedBody = "[]".padEnd(1_048_577);
 
 let workerId = 0;
 
-async function openWorker({ state = "OPEN", result = {} } = {}) {
+async function openWorker({ state = "OPEN", result = {}, session } = {}) {
   let receive;
   let navigate;
   const routed = [];
   const event = { addListener() {} };
   globalThis.chrome = {
+    ...(session ? { storage: { session } } : {}),
     runtime: {
       id: runtimeId,
       getURL: (path) => `${extensionUrl}${path}`,
@@ -104,6 +106,138 @@ async function openWorker({ state = "OPEN", result = {} } = {}) {
   );
   return { routed, send, navigate };
 }
+
+const mockDocument = {
+  tabId: arm.tabId,
+  documentId: arm.documentId,
+  frameId: arm.frameId,
+  pageUrl: "https://fixture.invalid/",
+  frameUrl: "https://fixture.invalid/embed",
+};
+
+async function openWorkerWithPersistentMock(t) {
+  t.after(() => delete globalThis.chrome);
+  const items = new Map();
+  const session = {
+    async get(key) {
+      return items.has(key) ? { [key]: structuredClone(items.get(key)) } : {};
+    },
+    async set(update) {
+      for (const [key, value] of Object.entries(update))
+        items.set(key, structuredClone(value));
+    },
+    async remove(key) {
+      items.delete(key);
+    },
+  };
+  const stored = new StoredReloadMocks(session);
+  const attempt = await stored.begin(mockDocument);
+  const rule = {
+    token: attempt.token,
+    endpoint: "wss://fixture.invalid/wamp",
+    procedure: "demo.read",
+    topic: null,
+    resultBody,
+    persistent: { enabled: true, revision: 0 },
+  };
+  await attempt.finish(true, rule);
+
+  const worker = await openWorker({ session });
+  return {
+    ...worker,
+    rule,
+    readStatus: () =>
+      worker.send({ type: "get-mock-status", tabId: arm.tabId }),
+    readStored: () =>
+      new StoredReloadMocks(session).inspect(arm.tabId, rule.token),
+  };
+}
+
+test("switches a persistent mock on and off in storage and in the source document", async (t) => {
+  const { routed, send, rule, readStatus, readStored } =
+    await openWorkerWithPersistentMock(t);
+  const changes = [
+    { enabled: false, revision: 1, state: "disabled" },
+    { enabled: true, revision: 2, state: "waiting-call" },
+  ];
+
+  for (const { enabled, revision, state } of changes) {
+    assert.deepEqual(
+      await send({
+        type: "set-mock-enabled",
+        tabId: arm.tabId,
+        token: rule.token,
+        enabled,
+      }),
+      { ok: true },
+    );
+    const { mocks } = await readStatus();
+    assert.equal(mocks[0]?.token, rule.token);
+    assert.equal(mocks[0]?.state, state);
+    const saved = { ...rule, persistent: { enabled, revision } };
+    assert.deepEqual((await readStored())?.rule, saved);
+    assert.deepEqual(routed.at(-1), [
+      arm.tabId,
+      { type: "sync-persistent-mock", rule: saved },
+      { documentId: arm.documentId },
+    ]);
+  }
+});
+
+test("deletes a persistent mock and rejects a late readiness report", async (t) => {
+  const { routed, send, rule, readStatus, readStored } =
+    await openWorkerWithPersistentMock(t);
+  const readiness = {
+    type: "mock-reload-readiness",
+    token: rule.token,
+    ready: true,
+    revision: rule.persistent.revision,
+  };
+  const sender = {
+    ...frame,
+    id: runtimeId,
+    url: mockDocument.frameUrl,
+    tab: { ...frame.tab, url: mockDocument.pageUrl },
+  };
+  assert.deepEqual(await send(readiness, sender), { ok: true });
+  assert.equal((await readStatus()).mocks[0]?.state, "waiting-call");
+
+  assert.deepEqual(
+    await send({ type: "delete-mock", tabId: arm.tabId, token: rule.token }),
+    { ok: true },
+  );
+  assert.deepEqual(await readStatus(), { mocks: [] });
+  assert.equal(await readStored(), null);
+  assert.deepEqual(routed, [
+    [
+      arm.tabId,
+      {
+        type: "sync-persistent-mock",
+        rule: { ...rule, persistent: { enabled: false, revision: 1 } },
+      },
+      { documentId: arm.documentId },
+    ],
+  ]);
+  assert.deepEqual(await send(readiness, sender), { ok: false });
+});
+
+test("rejects persistent mock edits for an unknown token without changing the saved rule", async (t) => {
+  const { routed, send, rule, readStatus, readStored } =
+    await openWorkerWithPersistentMock(t);
+  const target = { tabId: arm.tabId, token: crypto.randomUUID() };
+  const before = await readStatus();
+
+  assert.deepEqual(
+    await send({ ...target, type: "set-mock-enabled", enabled: false }),
+    { ok: false },
+  );
+  assert.deepEqual(await send({ ...target, type: "delete-mock" }), {
+    ok: false,
+  });
+  assert.deepEqual(await readStatus(), before);
+  assert.deepEqual((await readStored())?.rule, rule);
+  assert.deepEqual(routed, []);
+});
 
 test("only the panel can arm a retained CALL and RESULT in the selected document", async (t) => {
   t.after(() => delete globalThis.chrome);
