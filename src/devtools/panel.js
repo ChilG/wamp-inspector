@@ -14,6 +14,7 @@ import {
   PreviewTabStrip,
   closePreviewTab,
   hidePreview,
+  movePreviewTab,
   openPreviewTab,
   retainPreviewTabs,
 } from "./panel-preview-tabs.js";
@@ -44,6 +45,8 @@ const previewTabs = new PreviewTabStrip(
   {
     activate: showMessageTab,
     close: closeMessageTab,
+    move: (key, index) =>
+      setPreview(movePreviewTab(currentPreview(), key, index)),
   },
 );
 const panelResize = new PayloadPanelResize(inspector);

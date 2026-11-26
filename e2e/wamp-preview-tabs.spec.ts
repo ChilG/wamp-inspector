@@ -92,6 +92,42 @@ test("opens, highlights, and restores JSON preview tabs per connection", async (
       ]);
     await captureDevTools(frontend, "wamp-preview-tabs.png");
 
+    function dragFirstTabToEnd(drop: boolean) {
+      return inspect(`(() => {
+        const list = document.querySelector('#preview-tabs');
+        const source = list.querySelector('[role=tab]');
+        const end = list.lastElementChild.getBoundingClientRect().right - 1;
+        const dataTransfer = new DataTransfer();
+        const options = { bubbles: true, cancelable: true, dataTransfer, clientX: end };
+        source.dispatchEvent(new DragEvent('dragstart', options));
+        list.dispatchEvent(new DragEvent('dragover', options));
+        const marker = list.querySelector('[data-drop-after]')?.querySelector('[role=tab]').textContent;
+        const labels = [...list.querySelectorAll('[role=tab]')].map((tab) => tab.textContent);
+        if (${drop}) list.dispatchEvent(new DragEvent('drop', options));
+        source.dispatchEvent(new DragEvent('dragend', options));
+        return { marker, labels };
+      })()`);
+    }
+
+    const expectedDrag = { marker: "CALL #2", labels: ["CALL #1", "CALL #2"] };
+    expect(await dragFirstTabToEnd(false)).toEqual(expectedDrag);
+    await expect.poll(tabs).toEqual(["CALL #1", "CALL #2"]);
+    expect(await dragFirstTabToEnd(true)).toEqual(expectedDrag);
+    await expect.poll(tabs).toEqual(["CALL #2", "CALL #1"]);
+    await expect.poll(active).toBe("CALL #2");
+
+    function moveSelectedTab(key: "ArrowLeft" | "ArrowRight") {
+      return inspect(`document.querySelector('#preview-tabs [aria-selected=true]').dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: ${JSON.stringify(key)}, altKey: true, shiftKey: true, bubbles: true, cancelable: true,
+        })
+      )`);
+    }
+    await moveSelectedTab("ArrowRight");
+    await expect.poll(tabs).toEqual(["CALL #1", "CALL #2"]);
+    await moveSelectedTab("ArrowLeft");
+    await expect.poll(tabs).toEqual(["CALL #2", "CALL #1"]);
+
     fixture.release(1);
     await expect
       .poll(() =>
@@ -129,7 +165,7 @@ test("opens, highlights, and restores JSON preview tabs per connection", async (
     await inspect("document.querySelector('#close-inspector').click()", true);
     await expect.poll(panelVisible).toBe(false);
     await openRow("demo.second");
-    await expect.poll(tabs).toEqual(["CALL #1", "CALL #2"]);
+    await expect.poll(tabs).toEqual(["CALL #2", "CALL #1"]);
     await inspect("document.querySelector('#close-inspector').click()", true);
 
     const longConnection = "live-sports-connection-".repeat(5) + "fixture";
@@ -151,7 +187,7 @@ test("opens, highlights, and restores JSON preview tabs per connection", async (
     await expect.poll(tabs).toEqual(["CALL #1"]);
     await expect.poll(payload).toContain("demo.other");
     await switchConnection();
-    await expect.poll(tabs).toEqual(["CALL #1", "CALL #2"]);
+    await expect.poll(tabs).toEqual(["CALL #2", "CALL #1"]);
     await expect.poll(active).toBe("CALL #2");
 
     await inspect(
@@ -264,6 +300,24 @@ test("opens, highlights, and restores JSON preview tabs per connection", async (
       )
       .toBe(true);
     await captureDevTools(frontend, "wamp-preview-tabs-narrow.png");
+
+    expect(
+      await inspect(`(() => {
+      const list = document.querySelector('#preview-tabs');
+      list.scrollLeft = 32;
+      const first = list.firstElementChild;
+      const source = list.lastElementChild.querySelector('[role=tab]');
+      const edge = list.getBoundingClientRect().left;
+      const options = { bubbles: true, cancelable: true, dataTransfer: new DataTransfer(), clientX: edge + 34 };
+      source.dispatchEvent(new DragEvent('dragstart', options));
+      list.dispatchEvent(new DragEvent('dragover', options));
+      const offset = parseFloat(getComputedStyle(first, '::before').left);
+      const tabLeft = first.getBoundingClientRect().left;
+      const visible = first.hasAttribute('data-drop-before') && tabLeft < edge && tabLeft + offset >= edge;
+      source.dispatchEvent(new DragEvent('dragend', options));
+      return visible;
+    })()`),
+    ).toBe(true);
 
     await sendCall(app, "demo.third", true);
     await openRow("demo.third");
